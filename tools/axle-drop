@@ -1,0 +1,85 @@
+#!/bin/sh
+# axle-drop — put a tab in every open Axle prompt, from any program.
+#
+#   axle-drop <name> <text> [options]     add or update a drop
+#   axle-drop --rm <name>                 remove it
+#   axle-drop --ls                        list current drops
+#
+# Options:
+#   --level ok|info|warn|alarm   ok = green, info = accent (default), warn = amber bubble,
+#                                alarm = red bubble (warn/alarm are never hidden as (+N))
+#   --ttl 30s|10m|2h|1d          disappear after this long
+#   --while-pid <pid>            disappear when that process exits (e.g. --while-pid $$)
+#   --dir <path>                 only show inside this directory (and below)
+#   --link <url>                 Ctrl+click opens it
+#   --icon <text>                shown before the text
+#   --expanded                   only show in the expanded view (Alt-i)
+#
+# Examples:
+#   axle-drop backup "backup running" --while-pid $$
+#   axle-drop ci "main: tests failed" --level alarm --ttl 1h --link "$RUN_URL"
+#   axle-drop deploy "deploying api" --level warn --dir ~/repos/api --while-pid $$
+#
+# A drop is a small "key=value" file in ${XDG_CACHE_HOME:-~/.cache}/axle/drops/<name>;
+# programs can also write it directly (write a temp file, then rename it into place).
+
+set -eu
+dir="${XDG_CACHE_HOME:-$HOME/.cache}/axle/drops"
+
+die() { printf 'axle-drop: %s\n' "$1" >&2; exit 2; }
+valid_name() { case $1 in ''|.*|*/*|*[!A-Za-z0-9._-]*) return 1 ;; esac; }
+
+case ${1:-} in
+  ''|-h|--help) sed -n '2,23s/^# \{0,1\}//p' "$0"; exit 0 ;;
+  --ls)
+    [ -d "$dir" ] || exit 0
+    for f in "$dir"/*; do
+      [ -f "$f" ] || continue
+      t=$(grep -m1 '^text=' "$f" | cut -d= -f2-) || true
+      [ -n "$t" ] || t=$(head -n1 "$f")
+      printf '%-16s %s\n' "${f##*/}" "$t"
+    done
+    exit 0 ;;
+  --rm)
+    valid_name "${2:-}" || die "usage: axle-drop --rm <name>"
+    rm -f -- "$dir/$2"; exit 0 ;;
+esac
+
+name=$1; shift
+valid_name "$name" || die "names are letters, digits, '.', '-' and '_'"
+[ $# -ge 1 ] || die "usage: axle-drop <name> <text> [options]"
+text=$1; shift
+level=info expires='' pid='' only='' link='' icon='' expanded=''
+while [ $# -gt 0 ]; do
+  case $1 in
+    --level)     level=${2:?}; shift ;;
+    --ttl)       n=${2%[smhd]}; u=${2#"$n"}
+                 case $u in s|'') m=1 ;; m) m=60 ;; h) m=3600 ;; d) m=86400 ;; *) die "bad --ttl '$2'" ;; esac
+                 case $n in ''|*[!0-9]*) die "bad --ttl '$2'" ;; esac
+                 expires=$(( $(date +%s) + n * m )); shift ;;
+    --while-pid) pid=${2:?}; shift ;;
+    --dir)       only=$(cd "${2:?}" && pwd -P) || die "no such directory '$2'"; shift ;;
+    --link)      link=${2:?}; shift ;;
+    --icon)      icon=${2:?}; shift ;;
+    --expanded)  expanded=1 ;;
+    *)           die "unknown option '$1'" ;;
+  esac
+  shift
+done
+case $level in ok|info|warn|alarm) ;; *) die "--level is ok, info, warn or alarm" ;; esac
+# One line per value: newlines in the text would break the format.
+text=$(printf '%s' "$text" | tr '\n' ' ')
+
+mkdir -p "$dir"
+tmp="$dir/.$name.$$"
+{
+  printf 'text=%s\nlevel=%s\n' "$text" "$level"
+  [ -n "$expires" ]  && printf 'expires=%s\n' "$expires"
+  [ -n "$pid" ]      && printf 'pid=%s\n' "$pid"
+  [ -n "$only" ]     && printf 'dir=%s\n' "$only"
+  [ -n "$link" ]     && printf 'link=%s\n' "$link"
+  [ -n "$icon" ]     && printf 'icon=%s\n' "$icon"
+  [ -n "$expanded" ] && printf 'expanded=1\n'
+  true
+} > "$tmp"
+mv -f -- "$tmp" "$dir/$name"
