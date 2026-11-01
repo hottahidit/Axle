@@ -7,10 +7,13 @@
 #   plain zsh   source /path/to/axle/axle.plugin.zsh
 #
 # Modules (all on by default; choose with AXLE_MODULES=(...) or `axle module`):
-#   suggest  grey suggestions as you type, with a list of likely options
-#   jump     `j <words>`: cd to the folder you most likely mean
-#   search   Ctrl-R: a history picker (filter by this folder, by success)
-#   env      activate a project's venv when you cd in, deactivate when you leave
+#   suggest    grey suggestions as you type (Ctrl-N lists the alternatives)
+#   highlight  syntax highlighting as you type
+#   upsearch   ↑/↓ search history for what you've typed
+#   jump       `j <words>`: cd to the folder you most likely mean
+#   search     Ctrl-R: a history picker (filter by this folder, by success)
+#   env        activate a project's venv when you cd in, deactivate when you leave
+#   fix        `fix` / Esc Esc: correct the last command (typos, sudo)
 #
 # Without oh-my-zsh, AXLE_THEME=benzene loads the Benzene prompt as well.
 
@@ -32,9 +35,10 @@ axle_command drop    _axle_cmd_drop    tool 'drop <name> <text>'   'a tab in eve
 () {
   # Default modules. A list that's just an earlier version's default is upgraded, so
   # `axle reload` picks up new modules; a list you set yourself is left alone.
-  local -a defaults=(suggest jump search env)
+  local -a defaults=(suggest highlight upsearch jump search env fix)
+  # (Earlier versions' complete lists count as "everything", so new modules join them.)
   if (( ! ${+AXLE_MODULES} )) ||
-     [[ "$AXLE_MODULES" == (aistatus|aistatus suggest|$_axle_auto_modules) ]]; then
+     [[ "$AXLE_MODULES" == (aistatus|aistatus suggest|suggest jump search env|$_axle_auto_modules) ]]; then
     typeset -ga AXLE_MODULES=($defaults)
     typeset -g _axle_auto_modules="$defaults"
   fi

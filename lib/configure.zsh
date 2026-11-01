@@ -200,11 +200,14 @@ _cf_theme_steps() {
 }
 
 _cf_tool_steps() {
-  _cf_toggle "Which axle modules?" modules "${AXLE_MODULES:-suggest jump search env}" \
+  _cf_toggle "Which axle modules?" modules "${AXLE_MODULES:-suggest highlight upsearch jump search env fix}" \
     "suggest:grey suggestions as you type (Ctrl-N lists the alternatives)" \
+    "highlight:syntax highlighting: green commands, red typos, coloured strings and options" \
+    "upsearch:type part of a command, then ↑/↓ walks through history lines with it" \
     "jump:j <words> goes to the folder you most likely mean" \
     "search:Ctrl-R opens a history picker with filters" \
-    "env:switches a project's venv on and off as you cd in and out"
+    "env:switches a project's venv on and off as you cd in and out" \
+    "fix:fix (or Esc Esc) corrects the last command: typos, missing sudo"
   _cf_recount
   local -a mods=(${=_cf[modules]})
 

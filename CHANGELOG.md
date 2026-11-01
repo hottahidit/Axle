@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.2
+
+Three new modules, on by default and switchable in `axle configure`:
+- **highlight**: syntax highlighting as you type (like zsh-syntax-highlighting): green
+  commands, red ones that don't exist, coloured options, strings, variables, globs,
+  operators and comments, underlined paths; about 0.3 ms a keystroke.
+- **upsearch**: type part of a command, then ↑/↓ walks through the history lines containing
+  it, with the match highlighted (like zsh-history-substring-search).
+- **fix**: `fix` or Esc Esc puts the corrected last command on the line: command and git
+  subcommand typos, misspelled files and folders, `git push` without an upstream, a script
+  that isn't executable, and `sudo` for commands that need it (like thefuck and oh-my-zsh's
+  sudo plugin). Esc Esc on a typed line adds or removes `sudo`.
+
+If your module list was an earlier version's complete default, the new modules join it.
+
 ## 0.2.1
 
 **Faster loading: about 3 ms instead of 10–15 ms** (both parts; in a real interactive shell,

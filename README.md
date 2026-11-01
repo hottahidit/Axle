@@ -23,6 +23,9 @@ prompt. Together, each makes the other better.
   - [Switching variants at runtime](#switching-variants-at-runtime)
 - [axle, the tool](#axle-the-tool)
   - [suggest: smart autosuggestions](#suggest-smart-autosuggestions)
+  - [highlight](#highlight)
+  - [upsearch](#upsearch)
+  - [fix](#fix)
   - [jump](#jump)
   - [search](#search)
   - [env](#env)
@@ -496,14 +499,17 @@ axle variant nox    # switch back to NoxA
 
 # axle, the tool
 
-Modules (all on by default; `axle module` lists them, `axle module off <name>` turns one off):
+Modules (all on by default; switch them in `axle configure`, or with `axle module off <name>`):
 
-| Module | Does |
-|---|---|
-| `suggest` | grey suggestions as you type (Ctrl-N lists the alternatives) |
-| `jump` | `j <words>`: cd to the folder you most likely mean |
-| `search` | Ctrl-R: a history picker with filters |
-| `env` | activates a project's venv when you enter it, deactivates when you leave |
+| Module | Does | Like |
+|---|---|---|
+| `suggest` | grey suggestions as you type (Ctrl-N lists the alternatives) | zsh-autosuggestions |
+| `highlight` | syntax highlighting as you type: green commands, red typos | zsh-syntax-highlighting |
+| `upsearch` | type part of a command, then ↑/↓ walks through history lines with it | zsh-history-substring-search |
+| `jump` | `j <words>`: cd to the folder you most likely mean | zoxide, z |
+| `search` | Ctrl-R: a history picker with filters | atuin, fzf's Ctrl-R |
+| `env` | activates a project's venv when you enter it, deactivates when you leave | direnv, autoenv |
+| `fix` | `fix` / Esc Esc: corrects the last command (typos, missing sudo) | thefuck, oh-my-zsh's sudo |
 
 All of them learn from one history log the tool keeps: every command with where it ran, its
 exit code, run time and the command before it (`~/.local/share/axle/history`; lines typed with a
@@ -558,6 +564,55 @@ Widgets for your own bindings, named like zsh-autosuggestions': `axle-suggest-ac
 It costs nothing at shell startup (the learned data loads on your first keystroke, from a cache
 rebuilt in the background) and well under 2 ms per keystroke. `AXLE_SUGGEST=0` turns it off; it
 also steps aside if you use zsh-autosuggestions.
+
+## highlight
+
+As you type, the command turns **green** when it exists and **red** when it doesn't (so a typo
+shows before you press Enter); options, strings, variables (also inside double quotes), globs,
+operators and comments each get their own colour, existing paths are underlined, and keywords
+(`if`, `for`, `[[`) are bold. Colours come from the prompt's palette.
+
+```zsh
+typeset -A AXLE_HIGHLIGHT_STYLES=(unknown 'fg=red,bold' path 'underline' string 'fg=#a6e3a1')
+#   kinds: command unknown reserved option string variable glob operator comment path assign
+AXLE_HIGHLIGHT_MAX=2000        # longer lines (big pastes) aren't highlighted
+```
+
+It takes about 0.3 ms a keystroke. Whether a command exists is remembered (on WSL, looking up an
+unknown name means searching every Windows folder on your PATH), and forgotten when PATH
+changes. It steps aside if zsh-syntax-highlighting is loaded.
+
+## upsearch
+
+Type part of a command, then **↑**: only history lines containing it come up, newest first, with
+the match highlighted; ↑ again goes further back, ↓ comes forward, and past the newest you get
+back what you typed. On an empty line, ↑ and ↓ work as usual.
+
+```
+push ↑   →   git push --force        ↑   →   git push origin main
+```
+
+`AXLE_UPSEARCH_PREFIX=1` matches only lines that start with what you typed (like zsh's own
+history-beginning-search), `AXLE_UPSEARCH_CASE=1` makes it case-sensitive. The widgets are
+`axle-history-search-up` / `-down`, for your own keys.
+
+## fix
+
+When a command fails, `fix` puts the corrected one on the line for you to check, and Enter runs
+it. Esc Esc does the same on an empty line (or adds `sudo` to the last command when there's
+nothing to correct), and on a line you're typing it adds or removes `sudo`.
+
+| You ran | `fix` gives |
+|---|---|
+| `gti status` | `git status` (the closest command, preferring ones you use) |
+| `git psuh` | `git push` |
+| `git push` (a new branch) | `git push -u origin my-branch` |
+| `cd Donwloads`, `cat readme.md` | `cd Downloads`, `cat README.md` (the closest name that exists) |
+| `./deploy.sh` (not executable) | `chmod +x ./deploy.sh && ./deploy.sh` |
+| `apt install htop`, `systemctl restart nginx` | the same with `sudo` |
+
+It never runs anything itself. `AXLE_FIX_CMD` renames the command (`''` for none), `AXLE_FIX_KEY`
+changes the key. (It does what the tool *thefuck* does, without the name.)
 
 ## jump
 
@@ -723,7 +778,7 @@ lib/                   shared by both: the `axle` command, help, settings, Tab c
 benzene/               the prompt: nox.zsh, axon.zsh, more.zsh (more segments),
                        segments.zsh (yours + drops), aistatus.zsh, preview.zsh, tmux.conf
 core/                  the tool's core: events.zsh (events, hooks, history log), commands.zsh
-modules/               the tool's modules: suggest, jump, search, env
+modules/               the tool's modules: suggest, highlight, upsearch, jump, search, env, fix
 tools/axle-drop        put a tab in the prompt from any program
 tests/                 the test suite (zsh tests/run.zsh)
 .github/workflows/     CI: the tests on Linux and macOS

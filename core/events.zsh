@@ -65,6 +65,8 @@ _axle_hook_cmd() {
 
 typeset -gF _axle_ev_start=0
 typeset -g  _axle_ev_cmd='' _axle_ev_dir='' _axle_ev_prev=''
+typeset -g  _axle_ev_last_cmd='' _axle_ev_last_dir=''     # the last finished command (for fix)
+typeset -gi _axle_ev_last_exit=0
 typeset -g  _axle_hist_file=${XDG_DATA_HOME:-$HOME/.local/share}/axle/history
 
 _axt_preexec() {
@@ -77,6 +79,7 @@ _axt_precmd() {
   if (( _axle_ev_start )); then
     local -F secs=$(( EPOCHREALTIME - _axle_ev_start ))
     _axle_ev_start=0
+    _axle_ev_last_cmd=$_axle_ev_cmd _axle_ev_last_exit=$st _axle_ev_last_dir=$_axle_ev_dir
     _axle_emit command-done $st $secs "$_axle_ev_cmd"
     _axle_hist_record $st $secs "$_axle_ev_cmd"
   fi
