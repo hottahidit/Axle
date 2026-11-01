@@ -127,21 +127,34 @@ test_suggest_strategies_and_settings() {
 }
 
 test_suggest_list_opens_on_demand() {
-  # Drive the widgets in a real zle (zpty), recording what's drawn after the line on ^T.
+  # Drive the widgets in a real zle (zpty). Ctrl-X t records what's drawn after the line.
+  # Each step waits for its result rather than sleeping a fixed time (CI machines are slow),
+  # and Ctrl-T is avoided: it's the "status" key in macOS terminals.
   zmodload zsh/zpty 2>/dev/null || return 0
-  _k() { zpty -n -w sg "$1"; sleep 0.2 }
+  local -i n=0
+  _await() {   # wait up to 10 s for the record file to have $1 lines
+    local -i i
+    local -a lines
+    for i in {1..100}; do
+      [[ -r $T/post ]] && lines=(${(f)"$(<$T/post)"}) && (( ${#lines} >= $1 )) && return 0
+      sleep 0.1
+    done
+    fail "no answer from the shell (step $1)"
+  }
+  _k() { zpty -n -w sg "$1"; [[ $1 == *$'\x18t' ]] && _await $(( ++n )) }
   zpty sg "HOME=$HOME XDG_DATA_HOME=$XDG_DATA_HOME XDG_CACHE_HOME=$XDG_CACHE_HOME HISTFILE=$T/hist TERM=xterm zsh -f -i"
-  sleep 0.3
   zpty -w sg "PS1='> '; source $ROOT/axle.plugin.zsh; _axle_sg_ready=1; AXLE_SUGGEST_STRATEGY=(smart)"
   zpty -w sg "_axle_sg_learn \$EPOCHSECONDS 0 \$PWD '' 'echo alpha-one'; _axle_sg_learn \$EPOCHSECONDS 0 \$PWD '' 'echo alpha-two'"
-  zpty -w sg "_t() { print -r -- \"[\${POSTDISPLAY//\$'\n'/|}]\" >> $T/post }; zle -N _t; bindkey '^T' _t"
-  sleep 0.3
-  _k 'echo al'; _k $'\x14'          # typed: only the ghost text
-  _k $'\x0e'; _k $'\x14'            # Ctrl-N: the list opens
-  _k 'p'; _k $'\x14'                # typing closes it
-  _k $'\x15'; _k $'\x10'; _k $'\x14'  # empty line, Ctrl-P: a history line, no suggestion
+  # (zle -R redraws first, as a person's pause between keys would: suggestions are made then.)
+  zpty -w sg "_t() { zle -R; print -r -- \"[\${POSTDISPLAY//\$'\n'/|}]\" >> $T/post }; zle -N _t; bindkey '^Xt' _t"
+  zpty -w sg ": > $T/post"            # ready: the shell has run everything above
+  local -i i; for i in {1..100}; do [[ -e $T/post ]] && break; sleep 0.1; done
+  _k $'echo al\x18t'                  # typed: only the ghost text
+  _k $'\x0e\x18t'                     # Ctrl-N: the list opens
+  _k $'p\x18t'                        # typing closes it
+  _k $'\x15'; _k $'\x10\x18t'         # empty line, Ctrl-P: a history line, no suggestion
   zpty -w sg $'\x15exit'
-  sleep 0.3; zpty -d sg 2>/dev/null
+  zpty -d sg 2>/dev/null
   local -a post=("${(@f)$(<$T/post)}")
   assert_eq "$post[1]" '[pha-two]' "only the inline suggestion at first"
   assert_eq "$post[2]" '[pha-one|    echo alpha-two|  ▸ echo alpha-one]' "Ctrl-N opens the list"

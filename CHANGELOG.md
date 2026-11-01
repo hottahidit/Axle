@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.4
+
+- Tests: the live suggestion-list test waits for each step instead of fixed delays (it
+  failed on slower machines such as CI's macOS runners).
+
 ## 0.1.3
 
 - macOS: the Haskell (stack) segment used a `sed` feature macOS doesn't have.
