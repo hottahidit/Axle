@@ -65,7 +65,7 @@ _axle_has_marker() {
 # to (not including) $HOME and /, holding one of _axle_root_markers.
 #   reply=(root marker); returns 1 outside any project.
 _axle_project_root() {
-  local dir=${${1:-$PWD}:A} m
+  local dir=${${1:-$PWD}:a} m
   reply=()
   while [[ $dir != $HOME && $dir != / && -n $dir ]]; do
     local -a hits=($dir/(${(j:|:)~${(@b)_axle_root_markers}})(N:t))

@@ -73,7 +73,7 @@ _axle_run_pick() {
   local -a reply
   local REPLY
   if (( $# == 1 )) && [[ -d ${1/#\~/$HOME} ]]; then
-    local dir=${${1/#\~/$HOME}:A}
+    local dir=${${1/#\~/$HOME}:a}
     if _axle_project_root $dir; then
       _axle_run_root=$reply[1] _axle_run_marker=$reply[2] _axle_run_why='the folder you gave'
     else

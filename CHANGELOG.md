@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0 - Legionary (in progress, branch `legionary`)
+
+`axle run`, from the Legionary project launcher (plan: `docs/legionary/ROADMAP.md`).
+
+- New module **run** (off by default while in progress; `axle module on run`):
+  `axle run --dry-run` says which project it would run, where its root is, and why: the
+  project you name (`axle run shop`, ranked by where you work, like `j`), a path you give,
+  the one you're in, or else the last one you worked in (from the history log).
+- Shared helpers, so each works without the other part: project markers and venv finding
+  (`lib/project.zsh`, used by Benzene, `env` and `run`), and `j`'s folder ranking
+  (`lib/rank.zsh`, used by `j` and `run`). Both load on first use.
+- Bytecode compilation also covers files in subfolders of `modules/`.
+
 ## 0.2.3
 
 - Tests: the `fix` test no longer expects a case correction on case-insensitive disks
