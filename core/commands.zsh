@@ -136,6 +136,13 @@ _axle_cmd_doctor() {
   else
     _dr ok "no config file (defaults; \`axle configure\` writes one)"
   fi
+  # compiled (zsh bytecode, *.zwc): loads about twice as fast
+  local -a uncompiled=($AXLE_ROOT/{axle.plugin.zsh,benzene.zsh-theme,{lib,core,modules,benzene}/*.zsh}(N))
+  local f; local -a old=()
+  for f in $uncompiled; do [[ $f.zwc -nt $f ]] || old+=(${f#$AXLE_ROOT/}); done
+  if (( ! ${#old} )); then _dr ok "compiled to zsh bytecode (fast loading)"
+  elif [[ -w $AXLE_ROOT ]]; then _dr warn "${#old} file(s) not compiled yet" "they're compiled in the background when a shell starts; or now: _axle_compile"
+  else _dr warn "not compiled ($AXLE_ROOT isn't writable)" "loading takes about twice as long"; fi
   # speed
   if (( ${_axle_theme_loaded:-0} )) && (( $+functions[_axle_render] )); then
     local -F t=$EPOCHREALTIME
@@ -180,10 +187,3 @@ _axle_cmd_module() {
 }
 
 _axle_cmd_drop() { "$AXLE_ROOT/tools/axle-drop" "$@" }
-
-axle_command history _axle_cmd_history tool 'history [n]'          'recent commands: when, outcome, time, folder'
-axle_command stats   _axle_cmd_stats   tool 'stats [--here] [--days N]' 'what you run, what is slow, what fails'
-axle_command doctor  _axle_cmd_doctor  tool 'doctor'               'check the setup'
-axle_command module  _axle_cmd_module  tool 'module [on|off <name>]'  'list modules, or switch one on or off'
-axle_command hook    _axle_hook_cmd    tool 'hook <event> <fn>'    'run a function on shell events'
-axle_command drop    _axle_cmd_drop    tool 'drop <name> <text>'   'a tab in every prompt, from any program'

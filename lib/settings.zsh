@@ -214,7 +214,8 @@ _axle_cmd_config() {
       else
         print -r -- "$name=${value}"
       fi
-      _axle_config_saved $name && print -r -- "  saved:   $REPLY  (${AXLE_CONFIG/#$HOME/~})" ;;
+      _axle_config_saved $name && print -r -- "  saved:   $REPLY  (${AXLE_CONFIG/#$HOME/~})"
+      return 0 ;;
     set)
       if [[ -z $name ]]; then _axle_config_pick; return; fi
       [[ $name == AXLE_[A-Z0-9_]## ]] || { print -u2 "axle config: settings are named AXLE_..."; return 1 }
@@ -252,5 +253,3 @@ _axle_cmd_config() {
     *) print -u2 "usage: axle config [list | get <NAME> | set <NAME> <value> | unset <NAME> | edit | path]"; return 1 ;;
   esac
 }
-
-axle_command config _axle_cmd_config general 'config [get|set|unset|edit]' 'see and change settings'

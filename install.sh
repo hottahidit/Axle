@@ -139,6 +139,9 @@ else
   fi
 fi
 
+# Precompile to zsh bytecode, so shells load it about twice as fast (*.zwc, ignored by git).
+zsh -f -c "AXLE_ROOT=${(q)repo}; source ${(q)repo}/lib/command.zsh; _axle_compile" 2>/dev/null
+
 # --- set it up -------------------------------------------------------------------------
 
 if (( want_tool && configure )); then

@@ -20,7 +20,14 @@ source "$AXLE_ROOT/lib/command.zsh"
 source "$AXLE_ROOT/lib/common.zsh"
 _axle_load_config
 source "$AXLE_ROOT/core/events.zsh"
-source "$AXLE_ROOT/core/commands.zsh"
+# The tool's commands; their code (core/commands.zsh) loads when first used.
+_axle_lazy core/commands.zsh _axle_cmd_history _axle_cmd_stats _axle_cmd_doctor _axle_cmd_module _axle_cmd_drop
+axle_command history _axle_cmd_history tool 'history [n]'          'recent commands: when, outcome, time, folder'
+axle_command stats   _axle_cmd_stats   tool 'stats [--here] [--days N]' 'what you run, what is slow, what fails'
+axle_command doctor  _axle_cmd_doctor  tool 'doctor'               'check the setup'
+axle_command module  _axle_cmd_module  tool 'module [on|off <name>]'  'list modules, or switch one on or off'
+axle_command hook    _axle_hook_cmd    tool 'hook <event> <fn>'    'run a function on shell events'
+axle_command drop    _axle_cmd_drop    tool 'drop <name> <text>'   'a tab in every prompt, from any program'
 
 () {
   # Default modules. A list that's just an earlier version's default is upgraded, so

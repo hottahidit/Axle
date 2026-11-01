@@ -19,15 +19,17 @@ _axle_load_config
 # Map any accepted spelling (nox, noxa, NoxA, axon, AxoN) to a variant file name.
 _axle_resolve_variant() {
   case "${(L)1}" in
-    ''|nox|noxa) print -r -- nox ;;
-    axon)        print -r -- axon ;;
+    ''|nox|noxa) REPLY=nox ;;
+    axon)        REPLY=axon ;;
     *)           return 1 ;;
   esac
 }
 
 _axle_load_variant() {
-  local variant
-  if ! variant="$(_axle_resolve_variant "$1")"; then
+  local variant REPLY
+  if _axle_resolve_variant "$1"; then
+    variant=$REPLY
+  else
     print -u2 "axle: unknown variant '$1' (expected: nox, axon)"
     return 1
   fi

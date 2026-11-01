@@ -4,9 +4,12 @@
 #
 #   axle_command <name> <function> <group: general|theme|tool> <usage> <description>
 
+# Both parts source this file; the second time it's already loaded (except on reload).
+(( ${+_axle_cmd_fn} && ! ${_axle_reloading:-0} )) && return 0
+
 typeset -gA _axle_cmd_fn _axle_cmd_group _axle_cmd_usage _axle_cmd_desc
 typeset -g  AXLE_REPO=${AXLE_REPO:-https://github.com/hottahidit/axle}
-typeset -g  AXLE_VERSION=0.2.0
+typeset -g  AXLE_VERSION=0.2.1
 
 axle_command() {
   _axle_cmd_fn[$1]=$2 _axle_cmd_group[$1]=$3 _axle_cmd_usage[$1]=$4 _axle_cmd_desc[$1]=$5
@@ -14,6 +17,22 @@ axle_command() {
 
 zmodload zsh/datetime 2>/dev/null
 autoload -Uz add-zsh-hook
+
+# Functions that load their file the first time they're called, so a shell only reads
+# what it uses (help pages, settings, completion, prompts, update, ...).
+#   _axle_lazy <file under AXLE_ROOT> <function>...
+_axle_lazy() {
+  local file=$1 fn; shift
+  for fn; do
+    # Already loaded for real: keep it (unless reloading, to pick up edits).
+    [[ -n $functions[$fn] && $functions[$fn] != *_axle_lazy_load* ]] && (( ! ${_axle_reloading:-0} )) && continue
+    functions[$fn]="_axle_lazy_load ${(q)file} $fn && $fn \"\$@\""
+  done
+}
+_axle_lazy_load() {
+  source "$AXLE_ROOT/$1" || return 1
+  [[ $functions[$2] != *_axle_lazy_load* ]] || { print -u2 "axle: $1 didn't define $2"; return 1 }
+}
 
 axle() {
   local sub=${1:-help}
@@ -24,7 +43,7 @@ axle() {
   if (( ${+_axle_cmd_fn[$sub]} )); then
     shift
     # `axle <command> --help`: its help page (commands with their own -h keep it).
-    if [[ $1 == (--help|-h) && -n ${_axle_cmd_help[$sub]} && $sub != (jump|preview) ]]; then
+    if [[ $1 == (--help|-h) && $sub != (jump|preview) ]]; then
       _axle_help_one $sub; return
     fi
     ${_axle_cmd_fn[$sub]} "$@"
@@ -77,14 +96,19 @@ _axle_help() {
 
 # Settings saved by `axle configure` (after ~/.zshrc, so they win). Both parts read it.
 _axle_load_config() {
+  (( ${_axle_config_loaded:-0} && ! ${_axle_reloading:-0} )) && return 0
+  typeset -gi _axle_config_loaded=1
   typeset -g AXLE_CONFIG=${AXLE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/axle/config.zsh}
   [[ -r $AXLE_CONFIG ]] && source "$AXLE_CONFIG"
+  return 0
 }
 
 # Re-read whatever is loaded (tool, theme or both), so changes and new commands appear.
 _axle_cmd_reload() {
+  typeset -gi _axle_reloading=1
   (( ${_axle_tool_loaded:-0} ))  && source "$AXLE_ROOT/axle.plugin.zsh"
   (( ${_axle_theme_loaded:-0} )) && source "$AXLE_ROOT/benzene.zsh-theme"
+  _axle_reloading=0
   return 0
 }
 _axle_cmd_version() {
@@ -108,75 +132,6 @@ axle_command configure _axle_cmd_configure general 'configure' 'set Axle up step
 
 : ${AXLE_UPDATE_CHECK:=1}
 typeset -g _axle_update_cache=${XDG_CACHE_HOME:-$HOME/.cache}/axle/update
-
-# Is a newer version upstream (as last fetched)? REPLY = its version.
-_axle_update_status() {
-  local -a g=(command git -C $AXLE_ROOT)
-  local -i behind=$($g rev-list --count 'HEAD..@{u}' 2>/dev/null)
-  (( behind )) || return 1
-  local line
-  for line in "${(@f)$($g show '@{u}:lib/command.zsh' 2>/dev/null)}"; do
-    [[ $line == 'typeset -g  AXLE_VERSION='* ]] && { REPLY=${line#*=}; return 0 }
-  done
-  REPLY="$behind new commits"
-}
-
-# The changelog sections newer than this version, from <rev> (printed, indented).
-_axle_update_changes() {
-  local line
-  local -i on=0
-  for line in "${(@f)$(command git -C $AXLE_ROOT show "$1:CHANGELOG.md" 2>/dev/null)}"; do
-    if [[ $line == '## '* ]]; then
-      [[ $line == "## $AXLE_VERSION"* ]] && break
-      on=1
-    fi
-    (( on )) && print -r -- "  $line"
-  done
-}
-
-_axle_update_checkout_ok() {
-  if ! command git -C $AXLE_ROOT rev-parse --git-dir >/dev/null 2>&1; then
-    print -r -- "axle: $AXLE_ROOT isn't a git checkout; reinstall from $AXLE_REPO"
-    return 1
-  fi
-  if ! command git -C $AXLE_ROOT rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
-    print -r -- "axle: this checkout has no upstream to update from (clone it from $AXLE_REPO)"
-    return 1
-  fi
-}
-
-# `axle update [--check]`: pull the latest version (if Axle is a git checkout), then reload.
-_axle_cmd_update() {
-  _axle_update_checkout_ok || return 1
-  if [[ $1 == --check ]]; then
-    GIT_TERMINAL_PROMPT=0 command git -C $AXLE_ROOT fetch --quiet </dev/null ||
-      { print -u2 "axle: couldn't reach the repository"; return 1 }
-    if _axle_update_status; then
-      print -r -- "axle $REPLY is out (you have $AXLE_VERSION). What's new:"
-      _axle_update_changes '@{u}'
-      print -r -- "axle update installs it."
-      mkdir -p ${_axle_update_cache:h} 2>/dev/null
-      print -r -- "$EPOCHSECONDS $REPLY" >| $_axle_update_cache 2>/dev/null
-    else
-      print -r -- "axle is up to date ($AXLE_VERSION)"
-    fi
-    return 0
-  fi
-  local before=$(command git -C $AXLE_ROOT rev-parse HEAD) was=$AXLE_VERSION
-  command git -C $AXLE_ROOT pull --ff-only --quiet || {
-    print -u2 "axle: update failed (local changes? see: git -C $AXLE_ROOT status)"; return 1 }
-  local after=$(command git -C $AXLE_ROOT rev-parse HEAD)
-  if [[ $before == $after ]]; then
-    print -r -- "axle is up to date ($AXLE_VERSION)"
-  else
-    _axle_cmd_reload
-    print -r -- "updated: $was → $AXLE_VERSION"
-    local changes=$(AXLE_VERSION=$was _axle_update_changes HEAD)
-    if [[ -n $changes ]]; then print -r -- $changes
-    else command git -C $AXLE_ROOT log --oneline --no-decorate $before..$after | sed 's/^/  /'; fi
-    print -r -- "$EPOCHSECONDS" >| $_axle_update_cache 2>/dev/null
-  fi
-}
 
 axle_command update _axle_cmd_update general 'update [--check]' 'update Axle (git pull) and reload'
 
@@ -214,67 +169,71 @@ _axle_update_notice() {
   add-zsh-hook -d precmd _axle_update_notice
 }
 
-# --- uninstall ------------------------------------------------------------------
-
-_axle_cmd_uninstall() {
-  local mode=ask
-  case $1 in --yes|-y) mode=yes ;; --purge) mode=purge ;; '') ;; *)
-    print -u2 "usage: axle uninstall [--yes | --purge]"; return 1 ;; esac
-  local custom=${ZSH_CUSTOM:-${ZSH:+$ZSH/custom}} f
-  local -a links=() reply
-  for f in $custom/plugins/axle $custom/themes/benzene.zsh-theme $custom/themes/axle.zsh-theme; do
-    [[ -n $custom && -L $f && ${f:A} == $AXLE_ROOT(|/*) ]] && links+=($f)
-  done
-  local data=${XDG_DATA_HOME:-$HOME/.local/share}/axle cache=${XDG_CACHE_HOME:-$HOME/.cache}/axle
-  local -a remove=()
-  if [[ $mode == ask ]]; then
-    if (( ${#links} )); then
-      print -r -- "Links install.sh made:"; print -rl -- "  "${^links/#$HOME/~}
-      axle_confirm "Remove them?" y || links=()
-    fi
-    local -a opts=()
-    [[ -e $AXLE_CONFIG ]] && opts+=("settings — ${AXLE_CONFIG/#$HOME/~}:config")
-    [[ -d $data ]]        && opts+=("recorded history — ${data/#$HOME/~}:history")
-    [[ -d $cache ]]       && opts+=("cache — ${cache/#$HOME/~}:cache")
-    if (( ${#opts} )); then
-      axle_checkbox "Also delete:" cache $opts || return 1
-      remove=($reply)
-    fi
-  else
-    remove=(cache)
-    [[ $mode == purge ]] && remove+=(config history)
-  fi
-  (( ${#links} )) && rm -f -- $links && print -r -- "removed the links"
-  if (( ${remove[(Ie)config]} )) && [[ -f $AXLE_CONFIG ]]; then
-    rm -f -- $AXLE_CONFIG && print -r -- "deleted ${AXLE_CONFIG/#$HOME/~}"
-    rmdir ${AXLE_CONFIG:h} 2>/dev/null
-  fi
-  (( ${remove[(Ie)history]} )) && [[ -d $data && $data == */axle ]] &&
-    rm -rf -- $data && print -r -- "deleted ${data/#$HOME/~}"
-  (( ${remove[(Ie)cache]} )) && [[ -d $cache && $cache == */axle ]] &&
-    rm -rf -- $cache && print -r -- "deleted ${cache/#$HOME/~}"
-  local -a rc=()
-  [[ -r ~/.zshrc ]] && rc=(${(f)"$(command grep -n -E 'axle|benzene|AXLE_' ~/.zshrc 2>/dev/null)"})
-  if (( ${#rc} )); then
-    print; print -r -- "Remove these lines from ~/.zshrc yourself (Axle never edits it):"
-    print -rl -- "  "${^rc}
-  fi
-  print
-  print -r -- "Axle's own files are still in ${AXLE_ROOT/#$HOME/~} (delete the folder when you're done)."
-  print -r -- "Open a new shell to finish."
-}
-
 axle_command uninstall _axle_cmd_uninstall general 'uninstall [--yes|--purge]' 'remove Axle (asks first)'
 
-# Prompts, help pages, settings and Tab completion, shared by both parts.
-source "$AXLE_ROOT/lib/ui.zsh"
-source "$AXLE_ROOT/lib/help.zsh"
-source "$AXLE_ROOT/lib/settings.zsh"
-source "$AXLE_ROOT/lib/complete.zsh"
+axle_command config _axle_cmd_config general 'config [get|set|unset|edit]' 'see and change settings'
+
+# Loaded when first used.
+_axle_lazy lib/update.zsh   _axle_cmd_update _axle_cmd_uninstall _axle_update_status \
+                            _axle_update_changes _axle_update_checkout_ok
+_axle_lazy lib/ui.zsh       axle_select axle_checkbox axle_confirm axle_input _axle_ui_key \
+                            _axle_ui_tty _axle_ui_draw _axle_ui_done _axle_ui_fit
+_axle_lazy lib/help.zsh     _axle_help_one _axle_did_you_mean _axle_distance
+_axle_lazy lib/settings.zsh _axle_cmd_config _axle_setting _axle_config_value _axle_config_write
+_axle_lazy lib/complete.zsh _axle_complete
+
+# --- compiled files ---------------------------------------------------------------
+
+# zsh reads a file's precompiled bytecode (file.zwc) instead of the text when the .zwc is
+# newer, which makes loading about twice as fast. Compile whatever is missing or older
+# than its source: `_axle_compile` now, `_axle_compile bg` in the background (shell start).
+_axle_compile() {
+  local f built=''
+  local -a stale=()
+  # Bytecode only works with the zsh version that made it: after a zsh upgrade, redo all.
+  [[ -r $AXLE_ROOT/.zwc-version ]] && read -r built < $AXLE_ROOT/.zwc-version
+  [[ $built == $ZSH_VERSION ]] || rm -f -- $AXLE_ROOT/{*,{lib,core,modules,benzene}/*}.zwc(N)
+  for f in $AXLE_ROOT/{axle.plugin.zsh,benzene.zsh-theme,axle.zsh-theme} \
+           $AXLE_ROOT/{lib,core,modules,benzene}/*.zsh(N); do
+    [[ -f $f && ! $f.zwc -nt $f ]] && stale+=($f)
+  done
+  # Bytecode whose source is gone (install.sh removed that part): zsh would still run it.
+  for f in $AXLE_ROOT/{*,{lib,core,modules,benzene}/*}.zwc(N); do
+    [[ -e ${f%.zwc} ]] || rm -f -- $f
+  done
+  (( ${#stale} )) && [[ -w $AXLE_ROOT ]] || return 0
+  _axle_compile_files() {
+    local f
+    for f; do rm -f -- $f.zwc; zcompile -R -- $f 2>/dev/null; done
+    print -r -- $ZSH_VERSION >| $AXLE_ROOT/.zwc-version
+  }
+  if [[ $1 == bg ]]; then
+    ( _axle_compile_files $stale ) &!
+  else
+    _axle_compile_files $stale
+  fi
+  return 0
+}
+
+# Tab completion. compinit may not have run yet (plugin managers, a hand-written ~/.zshrc):
+# then register at the first prompt.
+_axle_complete_register() {
+  (( $+functions[compdef] )) || return 1
+  compdef _axle_complete axle
+  (( $+functions[_axle_jump_complete] )) && [[ -n $AXLE_JUMP_CMD ]] &&
+    compdef _axle_jump_complete $AXLE_JUMP_CMD
+  return 0
+}
+_axle_complete_later() {
+  _axle_complete_register
+  add-zsh-hook -d precmd _axle_complete_later
+}
+_axle_complete_register || { [[ -o interactive ]] && add-zsh-hook precmd _axle_complete_later }
 
 # The daily update check (once per shell, whichever part loads first).
 if [[ -o interactive ]] && (( ! ${+_axle_update_started} )); then
   typeset -g _axle_update_started=1
+  _axle_compile bg
   _axle_update_bg
   add-zsh-hook precmd _axle_update_notice
 fi

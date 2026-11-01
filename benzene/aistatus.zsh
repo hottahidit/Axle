@@ -298,6 +298,5 @@ _axle_cleanup_aistatus() {
   _axle_ai_stop
 }
 
-mkdir -p $_axle_ai_dir 2>/dev/null
 _axle_ai_load
 add-zsh-hook precmd _axle_aistatus_precmd

@@ -692,6 +692,20 @@ Every test runs in a fresh zsh with its own throwaway home folder, so nothing to
 files. GitHub Actions runs the suite on Linux and macOS for every push and pull request.
 `axle version` shows which version is loaded; changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
+### Speed
+
+Loading both parts takes about 3 ms, and drawing a prompt about 2 ms. Three things keep it there:
+
+- **Bytecode.** Axle's files are compiled to zsh bytecode (`*.zwc`, next to each file and
+  ignored by git), which zsh reads instead of the text. `install.sh` and `axle update` compile
+  them; a shell that finds one missing or out of date recompiles it in the background (and
+  after a zsh upgrade, all of them). `axle doctor` says whether they're compiled.
+- **Loading on first use.** Help pages, the settings table, Tab completion, the questions,
+  `update`/`uninstall` and the tool's longer commands are read the first time they're used.
+- **No subprocesses at startup or per prompt** beyond the background git status.
+
+zsh itself is the rest: on WSL a bare interactive zsh takes far longer to start than Axle adds.
+
 ## License
 
 [MIT](LICENSE): use, modify, fork and share Axle and Benzene freely, including in commercial

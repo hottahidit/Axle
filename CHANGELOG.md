@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.1
+
+**Faster loading: about 3 ms instead of 10–15 ms** (both parts; in a real interactive shell,
+Axle now adds about 10 ms instead of 40–80 ms before the first prompt)
+- Compiled to zsh bytecode (`*.zwc`): by `install.sh` and `axle update`, and in the
+  background when a shell finds a file missing or out of date (and after a zsh upgrade).
+- Help pages, the settings table, Tab completion, the questions, `update`/`uninstall` and
+  the tool's longer commands load on first use.
+- No subprocesses at startup: key bindings, the variant and the CPU count were each read
+  through one; `lib/command.zsh` is read once instead of by both parts.
+- `axle doctor` says whether Axle is compiled.
+- Fixed: `axle config get` returned an error status for settings not in the config file.
+
 ## 0.2.0
 
 **The `axle` command**

@@ -1,6 +1,9 @@
 # Tab completion for `axle`: every command, and what each takes (variants, palettes,
 # modules, segments, preview scenarios, hook events, drops, settings and their values).
 
+# Setting names and their values come from the settings table.
+(( ${+_axle_settings} )) || source "$AXLE_ROOT/lib/settings.zsh"
+
 _axle_complete() {
   local -a subs reply
   local name
@@ -112,18 +115,3 @@ _axle_complete() {
       esac ;;
   esac
 }
-
-# compinit may not have run yet (plugin managers, a hand-written ~/.zshrc): then register
-# at the first prompt.
-_axle_complete_register() {
-  (( $+functions[compdef] )) || return 1
-  compdef _axle_complete axle
-  (( $+functions[_axle_jump_complete] )) && [[ -n $AXLE_JUMP_CMD ]] &&
-    compdef _axle_jump_complete $AXLE_JUMP_CMD
-  return 0
-}
-_axle_complete_later() {
-  _axle_complete_register
-  add-zsh-hook -d precmd _axle_complete_later
-}
-_axle_complete_register || { [[ -o interactive ]] && add-zsh-hook precmd _axle_complete_later }

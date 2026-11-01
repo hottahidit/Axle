@@ -1,0 +1,4 @@
+# zsh bytecode, compiled locally (lib/command.zsh: _axle_compile)
+*.zwc
+*.zwc.old
+.zwc-version

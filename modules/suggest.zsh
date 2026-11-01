@@ -296,14 +296,20 @@ _axle_sg_cycle() {
   _axle_sg_render
 }
 
-# Keys that open/move the list do their usual job when there's no list.
+# Keys that open/move the list do their usual job when there's no list. The keymaps as they
+# were are kept as copies (axle-orig-emacs, axle-orig-viins); a key's old widget is looked
+# up there the first time it's needed, then remembered.
 typeset -gA _axle_sg_fallback          # "keymap<US>keys" -> the widget they had before
 _axle_sg_key_fallback() {
   # (While editing, $KEYMAP is "main", an alias of emacs or viins.)
   local km w
   for km in $KEYMAP emacs viins; do
+    if (( ! ${+_axle_sg_fallback[$km$'\x1f'$KEYS]} )) && (( ${+keymaps} )) &&
+       (( ${keymaps[(Ie)axle-orig-$km]} )); then
+      _axle_sg_fallback[$km$'\x1f'$KEYS]=${${(z)"$(bindkey -M axle-orig-$km -- $KEYS)"}[2]}
+    fi
     w=${_axle_sg_fallback[$km$'\x1f'$KEYS]}
-    [[ -n $w ]] && break
+    [[ -n $w && $w != undefined-key ]] && break
   done
   [[ -n $w && $w != undefined-key ]] || return
   [[ $w == ${~_axle_sg_quiet} ]] && _axle_sg_hold=1     # history: no suggestion on it
@@ -370,20 +376,13 @@ if (( AXLE_SUGGEST && $+builtins[zle] )) && (( ! $+functions[_zsh_autosuggest_st
   # choose from they keep their usual job (history).
   zle -N axle-suggest-next; zle -N axle-suggest-prev
   for _axle_w in accept partial execute clear toggle; do zle -N axle-suggest-$_axle_w; done
+  zmodload zsh/zleparameter 2>/dev/null
   for _axle_km in emacs viins; do
-    for _axle_k in '^N' '^[[1;2B'; do
-      _axle_w=${${(z)"$(bindkey -M $_axle_km $_axle_k)"}[2]}
-      [[ $_axle_w == axle-suggest-* ]] ||            # (a reload: keep the original)
-        _axle_sg_fallback[$_axle_km$'\x1f'${(g:c:)_axle_k}]=$_axle_w
-      bindkey -M $_axle_km $_axle_k axle-suggest-next
-    done
-    for _axle_k in '^P' '^[[1;2A'; do
-      _axle_w=${${(z)"$(bindkey -M $_axle_km $_axle_k)"}[2]}
-      [[ $_axle_w == axle-suggest-* ]] ||            # (a reload: keep the original)
-        _axle_sg_fallback[$_axle_km$'\x1f'${(g:c:)_axle_k}]=$_axle_w
-      bindkey -M $_axle_km $_axle_k axle-suggest-prev
-    done
+    # A copy of the keymap before we rebind, once (a reload keeps the first copy).
+    (( ${keymaps[(Ie)axle-orig-$_axle_km]} )) || bindkey -N axle-orig-$_axle_km $_axle_km
+    bindkey -M $_axle_km '^N' axle-suggest-next '^[[1;2B' axle-suggest-next \
+                         '^P' axle-suggest-prev '^[[1;2A' axle-suggest-prev
   done
-  unset _axle_km _axle_k _axle_w
+  unset _axle_km _axle_w
   _axle_hook_cmd command-done _axle_sg_cmd_done
 fi

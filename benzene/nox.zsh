@@ -795,9 +795,24 @@ _axle_seg_sudo() {
   fi
 }
 
+# How many CPUs (once, when first needed): from "0-23" in sysfs, or /proc/cpuinfo.
+_axle_count_cpus() {
+  local online='' part
+  local -i n=0
+  if [[ -r /sys/devices/system/cpu/online ]] && read -r online < /sys/devices/system/cpu/online; then
+    for part in ${(s:,:)online}; do
+      if [[ $part == <->-<-> ]]; then (( n += ${part#*-} - ${part%-*} + 1 )); else (( n++ )); fi
+    done
+  elif [[ -r /proc/cpuinfo ]]; then
+    n=${#${(M)${(f)"$(</proc/cpuinfo)"}:#processor*}}
+  fi
+  _axle_cache[cpus]=$(( n > 0 ? n : 1 ))
+}
+
 _axle_seg_load() {
   [[ -r /proc/loadavg ]] || return
   local load rest; read -r load rest < /proc/loadavg
+  (( ${+_axle_cache[cpus]} )) || _axle_count_cpus
   local -i cpus=${_axle_cache[cpus]:-1}
   (( load >= cpus || _axle_detail )) || return     # only when the CPU is saturated
   local colour=muted
@@ -1343,7 +1358,6 @@ _axle_variant_cleanup() {
 
 # --- install -----------------------------------------------------------------
 
-[[ -r /proc/cpuinfo ]] && _axle_cache[cpus]=${#${(M)${(f)"$(</proc/cpuinfo)"}:#processor*}}
 
 setopt prompt_subst
 add-zsh-hook preexec _axle_preexec
