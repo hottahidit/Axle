@@ -207,7 +207,8 @@ _cf_tool_steps() {
     "jump:j <words> goes to the folder you most likely mean" \
     "search:Ctrl-R opens a history picker with filters" \
     "env:switches a project's venv on and off as you cd in and out" \
-    "fix:fix (or Esc Esc) corrects the last command: typos, missing sudo"
+    "fix:fix (or Esc Esc) corrects the last command: typos, missing sudo" \
+    "run:axle run runs this project, or goes back to the last one (in progress)"
   _cf_recount
   local -a mods=(${=_cf[modules]})
 

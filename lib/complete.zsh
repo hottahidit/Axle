@@ -79,6 +79,15 @@ _axle_complete() {
     uninstall)
       (( CURRENT == 3 )) && _values option '--yes[links and cache, no questions]' \
         '--purge[also settings and history, no questions]' ;;
+    run)
+      if [[ $PREFIX == -* ]]; then
+        _values option '--dry-run[say which project, and why]'
+      elif (( $+functions[_axle_jump_complete] )); then
+        shift words; (( CURRENT-- ))
+        _axle_jump_complete
+      else
+        _directories
+      fi ;;
     jump)
       if (( $+functions[_axle_jump_complete] )); then
         shift words; (( CURRENT-- ))

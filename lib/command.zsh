@@ -181,6 +181,8 @@ _axle_lazy lib/ui.zsh       axle_select axle_checkbox axle_confirm axle_input _a
 _axle_lazy lib/help.zsh     _axle_help_one _axle_did_you_mean _axle_distance
 _axle_lazy lib/settings.zsh _axle_cmd_config _axle_setting _axle_config_value _axle_config_write
 _axle_lazy lib/complete.zsh _axle_complete
+_axle_lazy lib/project.zsh  _axle_scan_markers _axle_has_marker _axle_venv_in _axle_venv_find \
+                            _axle_project_root
 
 # --- compiled files ---------------------------------------------------------------
 
@@ -192,13 +194,13 @@ _axle_compile() {
   local -a stale=()
   # Bytecode only works with the zsh version that made it: after a zsh upgrade, redo all.
   [[ -r $AXLE_ROOT/.zwc-version ]] && read -r built < $AXLE_ROOT/.zwc-version
-  [[ $built == $ZSH_VERSION ]] || rm -f -- $AXLE_ROOT/{*,{lib,core,modules,benzene}/*}.zwc(N)
+  [[ $built == $ZSH_VERSION ]] || rm -f -- $AXLE_ROOT/{*,{lib,core,modules,modules/*,benzene}/*}.zwc(N)
   for f in $AXLE_ROOT/{axle.plugin.zsh,benzene.zsh-theme,axle.zsh-theme} \
-           $AXLE_ROOT/{lib,core,modules,benzene}/*.zsh(N); do
+           $AXLE_ROOT/{lib,core,modules,modules/*,benzene}/*.zsh(N); do
     [[ -f $f && ! $f.zwc -nt $f ]] && stale+=($f)
   done
   # Bytecode whose source is gone (install.sh removed that part): zsh would still run it.
-  for f in $AXLE_ROOT/{*,{lib,core,modules,benzene}/*}.zwc(N); do
+  for f in $AXLE_ROOT/{*,{lib,core,modules,modules/*,benzene}/*}.zwc(N); do
     [[ -e ${f%.zwc} ]] || rm -f -- $f
   done
   (( ${#stale} )) && [[ -w $AXLE_ROOT ]] || return 0

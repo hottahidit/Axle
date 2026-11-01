@@ -11,18 +11,8 @@
 : ${AXLE_ENV_QUIET:=0}
 typeset -g _axle_env_auto=''               # the venv this module activated (if any)
 
-# The nearest project venv from $PWD up to (not including) $HOME or /.
-_axle_env_find() {
-  local dir=$PWD
-  local -a hits
-  REPLY=''
-  while [[ $dir != $HOME && $dir != / ]]; do
-    hits=($dir/(.venv|venv|env|.env)/pyvenv.cfg(N))
-    (( ${#hits} )) && { REPLY=${hits[1]:h}; return 0 }
-    dir=${dir:h}
-  done
-  return 1
-}
+# The nearest project venv from $PWD up to (not including) $HOME or / (lib/project.zsh).
+_axle_env_find() { _axle_venv_find $PWD }
 
 _axle_env_say() {
   (( AXLE_ENV_QUIET )) || _axle_printp "%F{${_axle_c[muted]:-244}}axle: ${1//\%/%%}%f"

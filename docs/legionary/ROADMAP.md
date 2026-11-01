@@ -140,7 +140,7 @@ as "up" when its port answers; until then the prompt shows `⏳ shop-api`.
 
 Each milestone ends with its tests passing (Linux + macOS CI) and is usable on its own.
 
-### M0 · Groundwork
+### M0 · Groundwork ✔
 - Module `modules/run.zsh` (lazy), `axle run` registered, `run` in the wizard's module list
   (off by default on the branch).
 - State layout (below); `_axle_run_project_root`, "last project" from the history log.

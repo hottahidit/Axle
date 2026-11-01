@@ -381,34 +381,7 @@ _axle_version() {
   REPLY=${_axle_vcache[$key]}
 }
 
-# Find project marker files from $PWD up to $HOME (or /), nearest directory wins.
-# One glob (a single readdir) per level keeps this cheap even on slow filesystems.
-_axle_scan_markers() {
-  _axle_markers=()
-  local dir=$PWD f
-  local -a hits
-  while :; do
-    hits=($dir/(package.json|.nvmrc|.node-version|pyproject.toml|requirements.txt|setup.py|Pipfile|.python-version|go.mod|Cargo.toml|.terraform|flake.nix|shell.nix|.git|.tool-versions|rust-toolchain|rust-toolchain.toml|${~_axle_more_markers})(N))
-    for f in ${hits:t}; do
-      (( ${+_axle_markers[$f]} )) || _axle_markers[$f]=$dir
-    done
-    # A project's own virtualenv (the nearest one up the tree). One directly in ~ or /
-    # is a general-purpose venv, not a project's, so it doesn't count.
-    if (( ! ${+_axle_markers[venv]} )) && [[ $dir != $HOME && $dir != / ]]; then
-      hits=($dir/(.venv|venv|env|.env)/pyvenv.cfg(N))
-      (( ${#hits} )) && _axle_markers[venv]=${hits[1]:h}
-    fi
-    [[ $dir == / || $dir == $HOME ]] && break
-    dir=${dir:h}
-  done
-}
-
-# Return 0 if any of the given marker files was found by _axle_scan_markers.
-_axle_has_marker() {
-  local f
-  for f; do (( ${+_axle_markers[$f]} )) && return 0; done
-  return 1
-}
+# _axle_scan_markers and _axle_has_marker (project markers) are in lib/project.zsh.
 
 # Read a file only when its mtime changed: _axle_cached <key> <file> <command...>.
 # The command gets the file as its last argument; its stdout is cached.

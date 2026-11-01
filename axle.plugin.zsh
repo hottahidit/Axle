@@ -14,6 +14,7 @@
 #   search     Ctrl-R: a history picker (filter by this folder, by success)
 #   env        activate a project's venv when you cd in, deactivate when you leave
 #   fix        `fix` / Esc Esc: correct the last command (typos, sudo)
+#   run        `axle run`: run this project, or go back to the last one (off by default)
 #
 # Without oh-my-zsh, AXLE_THEME=benzene loads the Benzene prompt as well.
 
@@ -31,6 +32,8 @@ axle_command doctor  _axle_cmd_doctor  tool 'doctor'               'check the se
 axle_command module  _axle_cmd_module  tool 'module [on|off <name>]'  'list modules, or switch one on or off'
 axle_command hook    _axle_hook_cmd    tool 'hook <event> <fn>'    'run a function on shell events'
 axle_command drop    _axle_cmd_drop    tool 'drop <name> <text>'   'a tab in every prompt, from any program'
+# Folder ranking from the history log (j, axle run).
+_axle_lazy lib/rank.zsh _axle_jump_load _axle_jump_rank
 
 () {
   # Default modules. A list that's just an earlier version's default is upgraded, so
