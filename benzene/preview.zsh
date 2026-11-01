@@ -92,6 +92,11 @@ _pv_reset() {
   cd $HOME/repos/clean
   unset SSH_CONNECTION SSH_TTY VIRTUAL_ENV CONDA_DEFAULT_ENV AWS_PROFILE AWS_VAULT AWS_REGION \
         AWS_DEFAULT_REGION CLOUDSDK_CORE_PROJECT GOOGLE_CLOUD_PROJECT DOCKER_HOST TF_WORKSPACE IN_NIX_SHELL
+  unset GOOGLE_APPLICATION_CREDENTIALS DIRENV_DIR RANGER_LEVEL YAZI_LEVEL NNNLVL LF_LEVEL XPLR_PID \
+        NVIM NVIM_LISTEN_ADDRESS VIM_TERMINAL VIMRUNTIME MC_SID CHEZMOI CONTAINER_ID \
+        _per_directory_history_is_global
+  export AZURE_CONFIG_DIR=$_pv_dir/none TIMEWARRIORDB=$_pv_dir/none TASKDATA=$_pv_dir/none \
+         TODO_FILE=$_pv_dir/none                                     # hide your real ones
   export KUBECONFIG=$_pv_dir/kube/none DOCKER_CONTEXT=default     # hide your real contexts
   export TMUX_TMPDIR=$_pv_dir/no-tmux; unset TMUX                  # ...and your real tmux
   (( ${#_pv_jobs} )) && { kill $_pv_jobs 2>/dev/null; wait 2>/dev/null; _pv_jobs=() }
@@ -148,6 +153,8 @@ _pv_add ram         'Memory pressure (86% RAM)'
 _pv_s_ram()         { _axle_mem_used=86 }
 _pv_add vicmd       'vi command mode'
 _pv_s_vicmd()       { _axle_keymap=vicmd }
+_pv_add inside      'A shell started from ranger (exit goes back)'
+_pv_s_inside()      { export RANGER_LEVEL=1 }
 _pv_add jobs        'Two background jobs'
 _pv_s_jobs()        { sleep 600 & _pv_jobs+=($!); sleep 600 & _pv_jobs+=($!) }
 _pv_add toolchain   'Project pins Node 20, a different version is active'

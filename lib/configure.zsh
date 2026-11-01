@@ -183,7 +183,7 @@ _cf_theme_steps() {
 
 _cf_tool_steps() {
   _cf_toggle "Which axle modules?" modules "${AXLE_MODULES:-suggest jump search env}" \
-    "suggest:grey suggestions as you type, with a list of likely options" \
+    "suggest:grey suggestions as you type (Ctrl-N lists the alternatives)" \
     "jump:j <words> goes to the folder you most likely mean" \
     "search:Ctrl-R opens a history picker with filters" \
     "env:switches a project's venv on and off as you cd in and out"
@@ -191,9 +191,9 @@ _cf_tool_steps() {
   local -a mods=(${=_cf[modules]})
 
   if (( ${mods[(Ie)suggest]} )); then
-    _cf_note="The best one shows in grey after the cursor; the others list below the line."
-    _cf_ask "How many suggestions?" suggest_list ${AXLE_SUGGEST_LIST:-5} \
-      "Just the inline one:1" "Up to 3:3" "Up to 5:5" "Up to 8:8"
+    _cf_note="The best one shows in grey after the cursor; Ctrl-N lists the others below the line."
+    _cf_ask "How many options in the Ctrl-N list?" suggest_list ${AXLE_SUGGEST_LIST:-5} \
+      "None, just the inline one:1" "Up to 3:3" "Up to 5:5" "Up to 8:8"
   fi
   if (( ${mods[(Ie)env]} )); then
     _cf_note='For example: "axle: using the shop-api venv".'
@@ -273,7 +273,7 @@ _cf_main() {
   if (( _cf_tool )); then
     print
     print -r -- "  axle modules: ${_cf[modules]:-none}"
-    [[ -n $_cf[suggest_list] ]] && print -r -- "  suggestions:  up to $_cf[suggest_list]"
+    [[ -n $_cf[suggest_list] ]] && print -r -- "  Ctrl-N list:  up to $_cf[suggest_list]"
     [[ -n $_cf[env_quiet] ]] && print -r -- "  venv switch:  ${${_cf[env_quiet]:#1}:+announced}${${(M)_cf[env_quiet]:#1}:+silent}"
   fi
   print

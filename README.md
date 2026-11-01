@@ -8,6 +8,29 @@ AxoN, are the two halves of one ring (like the benzene molecule, it reads the sa
 The two are separate: Benzene works on its own in any zsh, and the axle tool works under any
 prompt. Together, each makes the other better.
 
+## Contents
+
+- [Install](#install)
+- [The axle command](#the-axle-command)
+- [Benzene, the prompt](#benzene-the-prompt)
+  - [NoxA (nox)](#noxa-nox)
+  - [AxoN (axon)](#axon-axon)
+  - [Setup wizard](#setup-wizard)
+  - [Previewing every state](#previewing-every-state)
+  - [tmux](#tmux)
+  - [Switching variants at runtime](#switching-variants-at-runtime)
+- [axle, the tool](#axle-the-tool)
+  - [suggest: smart autosuggestions](#suggest-smart-autosuggestions)
+  - [jump](#jump)
+  - [search](#search)
+  - [env](#env)
+  - [history, stats, doctor, update](#history-stats-doctor-update)
+  - [Extending: segments, hooks, drops](#extending-segments-hooks-drops)
+- [Project](#project)
+  - [Development](#development)
+  - [License](#license)
+  - [Layout](#layout)
+
 ## Install
 
 ```zsh
@@ -50,6 +73,7 @@ axle stats          # what you run, what's slow, what fails, where you work
 axle doctor         # check the setup
 axle module         # list modules; `axle module off env` / `on env`
 axle update         # git pull, then reload
+axle version        # which version, and what's loaded
 axle reload         # re-read Axle's files
 ```
 
@@ -81,16 +105,26 @@ so if a terminal draws a character wider than expected, the line is cut at the e
 |---|---|
 | `dir` | Always. Turns **amber** on a Windows drive under WSL (`/mnt/c/...`); `ro` when not writable |
 | `git` | Inside a repo: branch (green clean / orange dirty) or `@sha (tag)`; `REBASE 2/5`, `MERGE`, ...; `gone` upstream; `⇡ahead ⇣behind =conflicts +staged !modified ?untracked *stashes`; last-commit signature (see below); push protocol `🌐ssh` / `🌐https` (`🌐http` in red: unencrypted) |
-| `context` | The machine, when it isn't this one: a server icon + hostname over SSH (if Axle is installed on the remote), the Docker icon + hostname in a container; `user@host` as root or expanded |
+| `context` | The machine, when it isn't this one: a server icon + hostname over SSH (if Axle is installed on the remote), the Docker icon + hostname in a container (a toolbox or distrobox container by its name); `user@host` as root or expanded |
+| `inside` | You're in a shell started from another program, so `exit` goes back to it: `↳ ranger`, `yazi`, `nnn`, `lf`, `xplr`, `vim` / `nvim` (`:sh`, `:terminal`), `mc`, `chezmoi` |
+| `direnv` | An `.envrc` is loaded; an amber `direnv blocked` bubble when there's one direnv hasn't been allowed to load (`direnv allow`) |
 | `python` `node` `go` `rust` `nix` | A venv/conda env is active, or the project (this dir or a parent) uses that language. Python also checks you're in the right venv: an amber bubble names it when this project's venv isn't activated (`shop-api (inactive)`), or when the active venv belongs to another project (`shop-api (other project)`) |
-| toolchain pins | A project pins a version (`.nvmrc`, `.node-version`, `.python-version`, `rust-toolchain`, `.tool-versions`) and the active one differs: the language becomes an amber bubble, `node 25.6.0 (wants 20)` |
+| `ruby` `java` `php` `lua` `perl` `scala` `flutter` `haskell` | The project uses that language (`Gemfile`, `pom.xml`/`build.gradle`, `composer.json`, `.luarc.json`, `cpanfile`, `build.sbt`, fvm's `.fvmrc`, `stack.yaml`, or a version pin). Through a version manager (rbenv, jenv, phpenv, luaenv, plenv, scalaenv, asdf, mise, fvm) it shows the version the folder selects, never running the program |
+| toolchain pins | A project pins a version (`.nvmrc`, `.node-version`, `.python-version`, `rust-toolchain`, `.ruby-version`, `.java-version`, `.php-version`, `.lua-version`, `.perl-version`, `.scala-version`, `.fvmrc`, `.tool-versions`) and the active one differs, or the version manager hasn't installed it: an amber bubble, `node 25.6.0 (wants 20)`, `rb 3.4.1 (not installed)` |
 | `kube` `docker` `aws` `gcloud` `terraform` | A context/profile/workspace is set (Docker only when not `default`) |
+| `ebenv` `gcred` `azure` | This folder's Elastic Beanstalk environment; the service account in `$GOOGLE_APPLICATION_CREDENTIALS` (`sa deployer@shop-dev`); Azure's default subscription (it applies everywhere, so only when expanded, or when it's production) |
+| `vimode` | `NORMAL` while in vi command mode |
 | `jobs` | Background jobs exist |
 | `tmux` | Outside tmux: detached sessions are still running (`tmux 2`); inside it: session and window when expanded |
 | `exec` (top right) | The last command took ≥ 2 s or failed: `2.21s`, `0.03s[1]`, `32s[147]`, `1.2s[0\|1\|0]` for a failed pipeline |
 | `sudo` (top right) | After a `sudo` command, time left before sudo asks for a password again: `sudo 14m`, then `sudo 42s` in red during the last minute. Updates in place |
 | `load` (top right) | Load average ≥ CPU count |
 | `clock` (top right) | Always: `22:46`; with seconds (`22:46:42`) while expanded. Ticks in place |
+| `timew` (top right) | timewarrior is tracking: the tags and how long, `⏱ client-x 1h05m` |
+| `task` (top right) | Overdue taskwarrior tasks, as an amber bubble; pending ones when expanded |
+| `todo` (top right) | Open todo.txt items, when expanded |
+| `vpn` (top right) | Connected to NordVPN |
+| `pdhist` (top right) | The per-directory-history plugin is in the mode you don't start in (Ctrl-G switches) |
 | `battery` (far top right) | Below 30% and discharging: a red battery icon |
 
 Colour carries the rest: the frame and arrow are one piece (`╭─ … ╰─➜`) in a single colour: mauve
@@ -107,7 +141,7 @@ ends, like oh-my-posh's diamond segments; a square block without a Nerd Font) in
 |---|---|
 | run time + exit code | the last command failed |
 | `user@host` | you're root (amber: a caution rather than a failure) |
-| kube / docker / aws / gcp / terraform | the context, profile, project or workspace matches `AXLE_PROD_PATTERN` (default `(#i)*prod*`, any case) |
+| kube / docker / aws / gcp / terraform / Beanstalk / Azure / Google credentials | the context, profile, project or workspace matches `AXLE_PROD_PATTERN` (default `(#i)*prod*`, any case) |
 | battery | below 30% and discharging |
 | git | merge conflicts, or the last commit has a bad or revoked signature |
 
@@ -117,7 +151,8 @@ AxoN stays plain.
 **Importance.** When more segments apply than fit (5 on the left, 3 on the right, or the
 terminal width), the least important ones are hidden and counted as `(+N)`. The ranking is
 `AXLE_NOX_PRIORITY`, most important first:
-`dir exec sudo git context battery kube aws gcloud docker jobs python node go rust terraform nix load mem shlvl clock`.
+`dir exec sudo git context inside vimode battery kube aws ebenv gcloud gcred azure docker direnv jobs tmux timew python node go rust ruby java php lua perl scala flutter haskell terraform nix task load mem vpn todo aistatus pdhist shlvl clock`.
+Run `axle segments` for every name.
 
 **Expanding.** Press **Alt-i** to show everything, including hidden segments, `user@host`, seconds on the clock, memory %,
 battery %, load, shell depth, commit age and never-pushed branches. Press it again, or run a
@@ -341,6 +376,7 @@ axle(other) REBASE 1/1 =1 ✗1 $      mid-rebase, a conflict, last command faile
 axle(@368f5f1) $                    detached HEAD
 nas stacks(main) &1 sudo 42s ✗130 $ over SSH (server icon + host), a background job, sudo still active,
                                     a slow (≥ 10 s) command that was interrupted
+↳ ranger dl $                       in a shell started from ranger (exit goes back)
 ```
 
 Colour carries the state: the `$` is mauve, **red after a failure** and **deep red at 80%+ RAM**
@@ -354,7 +390,7 @@ two-line prompt until the next command.
 
 ```zsh
 AXLE_VARIANT=axon
-AXLE_AXON_SHOW=(host dir git venv toolchain jobs tmux sudo battery exec)   # attention markers, in order
+AXLE_AXON_SHOW=(host inside dir git venv direnv toolchain jobs tmux sudo battery exec)   # in order
 AXLE_AXON_SLOW=10                                      # run time shown from this many seconds (0 = never)
 AXLE_AXON_CHAR='$'                                     # prompt character (AXLE_AXON_CHAR_VICMD=':')
 ```
@@ -364,7 +400,7 @@ AXLE_AXON_CHAR='$'                                     # prompt character (AXLE_
 `axle configure` asks about whatever is installed. For Benzene: icons, variant, colours, prompt
 character, past commands, and the variant's own options (alarms, clock and AI dots for NoxA;
 the run-time threshold for AxoN), each drawn as a live preview with the real prompt code. For the
-tool: which modules to switch on, how many suggestions to list, and whether venv switches are
+tool: which modules to switch on, how many options the Ctrl-N list shows, and whether venv switches are
 announced. It saves to `~/.config/axle/config.zsh` (loaded after `~/.zshrc`, so it wins),
 replacing only the settings it asked about, and tells you which `AXLE_*` lines in `~/.zshrc`
 it now overrides. `install.sh` starts it for you when the tool is installed.
@@ -426,7 +462,7 @@ Modules (all on by default; `axle module` lists them, `axle module off <name>` t
 
 | Module | Does |
 |---|---|
-| `suggest` | grey suggestions as you type, with a list of likely options |
+| `suggest` | grey suggestions as you type (Ctrl-N lists the alternatives) |
 | `jump` | `j <words>`: cd to the folder you most likely mean |
 | `search` | Ctrl-R: a history picker with filters |
 | `env` | activates a project's venv when you enter it, deactivates when you leave |
@@ -437,29 +473,47 @@ leading space aren't recorded).
 
 ## suggest: smart autosuggestions
 
-As you type, the likeliest completion appears in grey after the cursor, and when there are
-other likely ones, a short list of them below the line:
+Works like [zsh-autosuggestions](https://github.com/zsh-users/zsh-autosuggestions): as you type,
+the likeliest completion of the line appears in grey after the cursor. When you want to see the
+alternatives, Ctrl-N opens a short list of them below the line:
 
 ```
-╰─▶  axle c[onfigure]
-      ▸ axle configure
-        axle colors
+╰─▶  axle c[onfigure]          Ctrl-N →   ╰─▶  axle c[olors]
+                                                axle configure
+                                              ▸ axle colors
 ```
 
 | Key | Does |
 |---|---|
-| **→** or **End** | accept the selected option |
-| **Ctrl-→** or **Alt-f** | accept its next word |
-| **Ctrl-N / Ctrl-P**, **Shift-↓ / Shift-↑** | move through the list (with no list showing, they keep their usual job) |
-| **Enter** | run what you typed (the list disappears and nothing is left in scrollback) |
-| **Tab** | normal completion; its own list replaces this one |
+| **→** or **End** | accept the suggestion (also `vi`'s `l`, `$` and `A`) |
+| **Ctrl-→** or **Alt-f** | accept its next word (also `vi`'s `w`, `e`, `W`, `E`) |
+| **Ctrl-N** or **Shift-↓** | open the list of other options, then move down it |
+| **Ctrl-P** or **Shift-↑** | move up the list (with no list open, these keys keep their usual job: history) |
+| **Enter** | run what you typed (nothing is left in scrollback) |
+| typing | closes the list; **Tab** completion steps over it; moving through history shows no suggestion until you edit |
 
-Axle records each command with where it ran, how it ended and what came before it
-(`~/.local/share/axle/history`), and ranks matches by runs in **this directory**, runs **right
-after the previous command** (`git add .` → `git commit …`), and how often and how recently you
-ran them. Commands that have only ever failed are never offered, and duplicates are merged. Your
-shell history (newest first) fills the rest of the list. At most 5 options show
-(`AXLE_SUGGEST_LIST`; 1 = just the inline suggestion). Lines typed with a leading space aren't recorded.
+Suggestions come from strategies, tried in order until there are enough:
+
+- **smart**: Axle records each command with where it ran, how it ended and what came before it
+  (`~/.local/share/axle/history`), and ranks by runs in **this directory**, runs **right after
+  the previous command** (`git add .` → `git commit …`), and how often and how recently you ran
+  them. Commands that have only ever failed are never offered.
+- **history**: your shell history, newest first (what zsh-autosuggestions does).
+- **completion**: for the first word a command name, after it a real file or folder path.
+
+| Setting | Default | |
+|---|---|---|
+| `AXLE_SUGGEST` | `1` | `0` turns it off |
+| `AXLE_SUGGEST_STRATEGY` | `(smart history completion)` | which strategies, in order |
+| `AXLE_SUGGEST_STYLE` | muted grey | how it looks, e.g. `'fg=#6c7086,underline'` |
+| `AXLE_SUGGEST_IGNORE` | | a zsh pattern of lines never suggested, e.g. `'(cd|rm) *'` |
+| `AXLE_SUGGEST_MAX_BUFFER` | `0` | no suggestions past this many characters (0 = any) |
+| `AXLE_SUGGEST_LIST` | `5` | options in the Ctrl-N list (1 = no list) |
+
+Widgets for your own bindings, named like zsh-autosuggestions': `axle-suggest-accept`,
+`axle-suggest-execute` (accept and run), `axle-suggest-partial`, `axle-suggest-clear`,
+`axle-suggest-toggle`, `axle-suggest-next`, `axle-suggest-prev`. For example
+`bindkey '^ ' axle-suggest-accept`. Lines typed with a leading space aren't recorded.
 
 `axle history [n]` lists recent commands with when they ran, their outcome, run time and folder.
 
@@ -587,6 +641,19 @@ drops show at once while collapsed (`AXLE_DROP_MAX`). A drop is just a file in
 (write a temp file, then rename it into place). Drops are only ever read, never run, so nothing
 a program or a cloned repository writes can execute code in your shell.
 
+# Project
+
+## Development
+
+```zsh
+zsh tests/run.zsh            # the whole suite
+zsh tests/run.zsh git venv   # just tests/test_git.zsh and tests/test_venv.zsh
+```
+
+Every test runs in a fresh zsh with its own throwaway home folder, so nothing touches your real
+files. GitHub Actions runs the suite on Linux and macOS for every push and pull request.
+`axle version` shows which version is loaded; changes are listed in [CHANGELOG.md](CHANGELOG.md).
+
 ## License
 
 [MIT](LICENSE): use, modify, fork and share Axle and Benzene freely, including in commercial
@@ -600,10 +667,13 @@ benzene.zsh-theme      the Benzene prompt (oh-my-zsh theme / source)
 axle.zsh-theme         the old name: loads both
 install.sh             choose tool / prompt / both; links it in, removes the rest, runs the wizard
 lib/                   shared by both: helpers, the `axle` command, the setup wizard
-benzene/               the prompt: nox.zsh, axon.zsh, segments.zsh (yours + drops),
-                       aistatus.zsh, preview.zsh, tmux.conf
+benzene/               the prompt: nox.zsh, axon.zsh, more.zsh (more segments),
+                       segments.zsh (yours + drops), aistatus.zsh, preview.zsh, tmux.conf
 core/                  the tool's core: events.zsh (events, hooks, history log), commands.zsh
 modules/               the tool's modules: suggest, jump, search, env
 tools/axle-drop        put a tab in the prompt from any program
+tests/                 the test suite (zsh tests/run.zsh)
+.github/workflows/     CI: the tests on Linux and macOS
+CHANGELOG.md           what changed in each version
 LICENSE                MIT
 ```

@@ -68,15 +68,17 @@
 # --- settings ----------------------------------------------------------------
 
 (( ${+AXLE_NOX_LEFT} ))  || typeset -ga AXLE_NOX_LEFT=(
-  context dir git python node go rust nix kube docker aws gcloud terraform jobs tmux shlvl
+  context inside dir git direnv python node go rust ruby java php lua perl scala flutter
+  haskell nix kube docker aws ebenv gcloud gcred azure terraform jobs tmux shlvl vimode
 )
 (( ${+AXLE_NOX_RIGHT} )) || typeset -ga AXLE_NOX_RIGHT=(
-  exec sudo load mem clock battery aistatus
+  exec sudo timew task todo load mem vpn pdhist clock battery aistatus
 )
 # Most important first. `dir` is never hidden; unlisted segments rank last.
 (( ${+AXLE_NOX_PRIORITY} )) || typeset -ga AXLE_NOX_PRIORITY=(
-  dir exec sudo git context battery kube aws gcloud docker jobs tmux python node go rust
-  terraform nix load mem aistatus shlvl clock
+  dir exec sudo git context inside vimode battery kube aws ebenv gcloud gcred azure docker
+  direnv jobs tmux timew python node go rust ruby java php lua perl scala flutter haskell
+  terraform nix task load mem vpn todo aistatus pdhist shlvl clock
 )
 : ${AXLE_NERD_FONT:=0} ${AXLE_PATH_DEPTH:=4} ${AXLE_CMD_MIN_SECS:=2} ${AXLE_NOTIFY_SECS:=0}
 : ${AXLE_NOX_MAX_LEFT:=5} ${AXLE_NOX_MAX_RIGHT:=3}
@@ -110,7 +112,8 @@
 # VS Code's status bar already shows the branch sync state, interpreter and language
 # versions, so its layout keeps only what the terminal itself changes.
 (( ${+AXLE_NOX_CODE} )) || typeset -ga AXLE_NOX_CODE=(
-  context dir git python kube docker aws gcloud terraform jobs tmux exec sudo battery aistatus
+  context inside dir git direnv python kube docker aws ebenv gcloud gcred azure terraform
+  jobs tmux vimode exec sudo timew battery aistatus
 )
 (( ${+AXLE_DETAIL_KEY} )) || typeset -g AXLE_DETAIL_KEY='^[i'
 
@@ -156,7 +159,9 @@ _axle_load_palette() {
       clean 114  dirty 214  ahead 117  staged 114  changed 214  untracked 244
       conflict 203  stash 180  action 203
       python 221  node 114  go 81  rust 209  nix 110
-      kube 69  docker 39  aws 214  gcloud 75  terraform 141
+      ruby 204  java 215  php 147  lua 75  perl 110  scala 203  flutter 117  haskell 141
+      kube 69  docker 39  aws 214  gcloud 75  terraform 141  azure 69
+      direnv 180  inside 214  vimode 141  timew 180  task 180  todo 244  vpn 117  pdhist 244
       jobs 180  tmux 120  shlvl 244  duration 180  clock 244  sudo 214
       sig_good 114  sig_bad 203  sig_warn 214  proto 244
       alarm_bg 203  alarm_warn_bg 214  alarm_fg 16
@@ -172,7 +177,11 @@ _axle_load_palette() {
       changed $m[yellow]  untracked $m[overlay1]  conflict $m[red]  stash $m[lavender]
       action $m[red]
       python $m[teal]  node $m[flamingo]  go $m[sapphire]  rust $m[rosewater]  nix $m[lavender]
+      ruby $m[maroon]  java $m[peach]  php $m[lavender]  lua $m[blue]  perl $m[sapphire]
+      scala $m[red]  flutter $m[sky]  haskell $m[mauve]
       kube $m[pink]  docker $m[pink]  aws $m[pink]  gcloud $m[pink]  terraform $m[pink]
+      azure $m[pink]  direnv $m[yellow]  inside $m[peach]  vimode $m[mauve]
+      timew $m[yellow]  task $m[lavender]  todo $m[overlay1]  vpn $m[sky]  pdhist $m[overlay1]
       jobs $m[lavender]  tmux $m[green]  shlvl $m[overlay1]  duration $m[yellow]  clock $m[overlay1]
       sudo $m[peach]  sig_good $m[green]  sig_bad $m[red]  sig_warn $m[peach]
       proto $m[overlay1]  alarm_bg $m[red]  alarm_warn_bg $m[peach]  alarm_fg $m[crust]
@@ -210,6 +219,11 @@ if (( AXLE_NERD_FONT )); then
     battery $'\uf243 '  charging $'\U000f0084 '  clock $'\uf017 '  sudo $'\uf09c '
     sig_good $'\uf4a1'  sig_bad $'\uf4a3'  sig_unknown $'\uf4a3'  sig_none $'\uf4a3'
     proto $'\uf0ac '
+    ruby $'\ue791 '  java $'\ue738 '  php $'\ue73d '  lua $'\ue620 '  perl $'\ue769 '
+    scala $'\ue737 '  flutter $'\ue798 '  haskell $'\ue777 '  azure $'\uebd8 '
+    ebenv $'\ue7ad eb '  gcred $'\uf084 '  direnv $'\uf07c '  inside $'\uf489 '
+    toolbox $'\uf4b7 '  timew $'\uf254 '  task $'\uf4a0 '  todo $'\uf0ae '
+    vpn $'\U000f0582 '  pdhist $'\uf1da '
   )
 else
   _axle_i=(
@@ -218,6 +232,10 @@ else
     jobs '&'  shlvl '↳'  lock ' ro'  remote ''  container ''  tmux 'tmux '  load 'ld '  mem 'mem '
     battery '▯'  charging '▯+'  clock ''  sudo 'sudo '
     sig_good '✓sig'  sig_bad '✗sig'  sig_unknown '?sig'  sig_none '!sig'  proto '🌐'
+    ruby 'rb '  java 'java '  php 'php '  lua 'lua '  perl 'pl '  scala 'scala '
+    flutter 'flutter '  haskell 'hs '  azure 'az '  ebenv 'eb '  gcred 'sa '
+    direnv 'direnv'  inside '↳ '  toolbox '⬢ '  timew '⏱ '  task 'task '  todo 'todo '
+    vpn 'vpn '  pdhist 'hist '
   )
 fi
 
@@ -348,7 +366,10 @@ _axle_width() {
 
 # Run a binary's --version once per path and cache the first x.y[.z] it prints.
 _axle_version() {
+  # A version manager's shim (asdf, mise, rbenv, ...) runs whichever version the folder
+  # pins, so its answer is only good for this folder.
   local key="$*" out
+  [[ $1 == */shims/* ]] && key+=" @$PWD"
   if (( ! ${+_axle_vcache[$key]} )); then
     out=$("$@" 2>&1)
     if [[ $out =~ '[0-9]+\.[0-9]+(\.[0-9]+)?' ]]; then
@@ -367,7 +388,7 @@ _axle_scan_markers() {
   local dir=$PWD f
   local -a hits
   while :; do
-    hits=($dir/(package.json|.nvmrc|.node-version|pyproject.toml|requirements.txt|setup.py|Pipfile|.python-version|go.mod|Cargo.toml|.terraform|flake.nix|shell.nix|.git|.tool-versions|rust-toolchain|rust-toolchain.toml)(N))
+    hits=($dir/(package.json|.nvmrc|.node-version|pyproject.toml|requirements.txt|setup.py|Pipfile|.python-version|go.mod|Cargo.toml|.terraform|flake.nix|shell.nix|.git|.tool-versions|rust-toolchain|rust-toolchain.toml|${~_axle_more_markers})(N))
     for f in ${hits:t}; do
       (( ${+_axle_markers[$f]} )) || _axle_markers[$f]=$dir
     done
@@ -437,6 +458,8 @@ _axle_seg_context() {
   fi
   (( _axle_uid == 0 || _axle_detail )) || [[ $hostc != $_axle_c[host] ]] || return
   local host="%F{$hostc}$icon%m%f"
+  # A toolbox or distrobox container: by its name.
+  _axle_container_name && host="%F{$_axle_c[docker]}$_axle_i[toolbox]${REPLY//\%/%%}%f"
   if (( _axle_uid == 0 )); then
     REPLY="%B%F{$_axle_c[root]}%n%f%b%F{$_axle_c[muted]}@%f$host"
     _axle_alarm=2                         # amber: a caution, not a failure
@@ -561,12 +584,15 @@ _axle_seg_python() {
 # or asdf/mise's .tool-versions. When the active one doesn't match, the language segment
 # becomes an amber bubble: "node 25.6.0 (wants 20)".
 
-# The version this folder pins for a tool (node python rust go), nearest file first.
-# Only plain versions count: "20", "3.12.1", "1.77"; not "lts/*", "stable", "system".
+# The version this folder pins for a tool (node python rust go): the nearest pin file
+# decides (in the same folder, the tool's own file beats .tool-versions). Only plain
+# versions count, "20", "3.12.1", "1.77"; a pin like "lts/*" or "stable" means "unknown",
+# so nothing is flagged (just as nvm would use LTS and ignore pins further up).
 _axle_pin() {
   setopt localoptions extendedglob
-  local tool=$1 best='' bestdir='' file dir line want
+  local tool=$1 best='' bestdir='' bestfile='' file dir line want
   local -a names
+  local -A asdf=(node 'node|nodejs' python python rust rust go 'go|golang')
   case $tool in
     node)   names=(.nvmrc .node-version) ;;
     python) names=(.python-version) ;;
@@ -574,24 +600,29 @@ _axle_pin() {
   esac
   for file in $names .tool-versions; do
     dir=$_axle_markers[$file]
-    [[ -n $dir && ${#dir} -ge ${#bestdir} ]] || continue
-    want=''
+    [[ -n $dir ]] || continue
     if [[ $file == .tool-versions ]]; then
-      local -A asdf=(node 'node|nodejs' python python rust rust go 'go|golang')
+      (( ${#dir} > ${#bestdir} )) || continue
+      want=''
       while read -r line; do
         [[ $line == (${~asdf[$tool]})[[:space:]]* ]] && { want=${${line#*[[:space:]]}%%[[:space:]]*}; break }
       done < $dir/$file
-    elif [[ $file == rust-toolchain.toml ]]; then
-      while read -r line; do
-        [[ $line == channel[[:space:]]#=* ]] && { want=${${line#*=}//[\"\' ]/}; break }
-      done < $dir/$file
+      [[ -n $want ]] || continue                  # doesn't mention this tool
     else
-      read -r want < $dir/$file
+      (( ${#dir} >= ${#bestdir} )) || continue
+      want=''
+      if [[ $file == rust-toolchain.toml ]]; then
+        while read -r line; do
+          [[ $line == channel[[:space:]]#=* ]] && { want=${${line#*=}//[\"\' ]/}; break }
+        done < $dir/$file
+      else
+        read -r want < $dir/$file
+      fi
     fi
-    want=${${want#v}%%[[:space:]]*}
-    [[ $want == <->(.<->)# ]] || continue
-    best=$want bestdir=$dir
+    best=$want bestdir=$dir bestfile=$file
   done
+  best=${${best#v}%%[[:space:]]*}
+  [[ $best == <->(.<->)# ]] || best=''
   REPLY=$best
 }
 
@@ -813,6 +844,11 @@ _axle_seg_clock() {
   strftime -s time $fmt $EPOCHSECONDS
   _axle_paint clock "$_axle_i[clock]$time"
 }
+
+# More segments: direnv, Ruby/Java/PHP/Lua/Perl/Scala/Flutter/Haskell, Azure, Elastic
+# Beanstalk, Google credentials, timewarrior, taskwarrior, todo.txt, NordVPN, vi mode,
+# per-directory history, and "inside another program" (ranger, vim :sh, ...).
+source "$AXLE_ROOT/benzene/more.zsh"
 
 # --- git (async) -------------------------------------------------------------
 
@@ -1235,6 +1271,7 @@ _axle_precmd() {
   _axle_detail=0
   (( _axle_sudo_ran )) && _axle_sudo_check
   _axle_read_mem
+  _axle_direnv_first                # direnv's hook, if it would run after this one
   _axle_scan_markers
   _axle_git_start
   _axle_render

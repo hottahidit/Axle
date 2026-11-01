@@ -17,13 +17,14 @@
 #
 # Settings (in ~/.zshrc, before oh-my-zsh is sourced):
 #   AXLE_AXON_SHOW=(...)    attention markers, in order:
-#                           host dir git venv toolchain jobs tmux sudo battery exec  (all by default)
+#                           host inside dir git venv direnv toolchain jobs tmux sudo battery exec
+#                           (all by default)
 #   AXLE_AXON_SLOW=10       show run time at or above this many seconds (0 = never)
 #   AXLE_AXON_CHAR='$'      the prompt character (AXLE_AXON_CHAR_VICMD=':' in vi command mode)
 
 source "$AXLE_ROOT/benzene/nox.zsh"
 
-(( ${+AXLE_AXON_SHOW} )) || typeset -ga AXLE_AXON_SHOW=(host dir git venv toolchain jobs tmux sudo battery exec)
+(( ${+AXLE_AXON_SHOW} )) || typeset -ga AXLE_AXON_SHOW=(host inside dir git venv direnv toolchain jobs tmux sudo battery exec)
 : ${AXLE_AXON_SLOW:=10} ${AXLE_AXON_CHAR:=\$} ${AXLE_AXON_CHAR_VICMD:=:}
 
 # NoxA's two-line layout stays available as the expanded view.
@@ -36,9 +37,22 @@ functions -c _axle_render _axle_render_full
 _axle_axon_host() {
   if [[ -n $SSH_CONNECTION || -n $SSH_TTY ]]; then
     REPLY="%F{$_axle_c[ssh]}$_axle_i[remote]%m%f"
+  elif _axle_container_name; then
+    REPLY="%F{$_axle_c[docker]}$_axle_i[toolbox]${REPLY//\%/%%}%f"
   elif [[ -f /.dockerenv || -f /run/.containerenv ]]; then
     REPLY="%F{$_axle_c[docker]}$_axle_i[container]%m%f"
   fi
+}
+
+# In a shell started from another program (ranger, vim :sh, ...): "exit" goes back.
+_axle_axon_inside() {
+  _axle_seg_inside
+}
+
+# An .envrc direnv hasn't been allowed to load.
+_axle_axon_direnv() {
+  _axle_alarm=0; _axle_seg_direnv
+  (( _axle_alarm )) && REPLY="%F{$_axle_c[warn]}direnv blocked%f" || REPLY=''
 }
 
 # Just the folder name (~ at home), amber on a Windows drive, then git's dirty mark.
@@ -99,10 +113,10 @@ _axle_axon_venv() {
 # A pinned toolchain version that doesn't match the active one: "node 25.6.0 (wants 20)".
 _axle_axon_toolchain() {
   local name out='' have
-  for name in node python rust go; do
+  for name in node python rust go ruby java php lua perl scala flutter; do
     REPLY='' _axle_alarm=0
     _axle_seg_$name
-    (( _axle_alarm == 2 )) && [[ $REPLY == *wants* ]] || continue
+    (( _axle_alarm == 2 )) && [[ $REPLY == *(wants|not\ installed)* ]] || continue
     out+="${out:+ }%F{$_axle_c[warn]}${${REPLY//\%F\{[^\}]#\}/}//\%f/}%f"
   done
   REPLY=$out

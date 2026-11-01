@@ -6,6 +6,7 @@
 
 typeset -gA _axle_cmd_fn _axle_cmd_group _axle_cmd_usage _axle_cmd_desc
 typeset -g  AXLE_REPO=${AXLE_REPO:-https://github.com/hottahidit/axle}
+typeset -g  AXLE_VERSION=0.1.2
 
 axle_command() {
   _axle_cmd_fn[$1]=$2 _axle_cmd_group[$1]=$3 _axle_cmd_usage[$1]=$4 _axle_cmd_desc[$1]=$5
@@ -63,6 +64,14 @@ _axle_cmd_reload() {
   (( ${_axle_theme_loaded:-0} )) && source "$AXLE_ROOT/benzene.zsh-theme"
   return 0
 }
+_axle_cmd_version() {
+  local loaded=()
+  (( ${_axle_tool_loaded:-0} ))  && loaded+=('the axle tool')
+  (( ${_axle_theme_loaded:-0} )) && loaded+=("Benzene (${AXLE_VARIANT:-nox})")
+  print -r -- "Axle $AXLE_VERSION · ${(j: + :)loaded}"
+}
+axle_command version _axle_cmd_version general 'version' 'which version, and what is loaded'
+
 axle_command reload _axle_cmd_reload general 'reload' 're-read Axle'\''s files (after an update or edit)'
 
 # Step by step, for whichever parts are loaded, with a live prompt preview (in a subshell);

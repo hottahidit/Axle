@@ -4,6 +4,11 @@ zmodload zsh/datetime zsh/parameter 2>/dev/null
 zmodload -F zsh/stat b:zstat 2>/dev/null
 autoload -Uz add-zsh-hook
 
+# The colour table Benzene fills in. Declared here too, so code that looks colours up with
+# a default (${_axle_c[ok]:-green}) works when only the axle tool is loaded: without it,
+# zsh would read [ok] as an arithmetic index into a plain array.
+(( ${+_axle_c} )) || typeset -gA _axle_c
+
 # Separator glyph used between prompt segments. Box-drawing │ (U+2502), not a pipe.
 typeset -g AXLE_SEP='│'
 
@@ -30,6 +35,7 @@ _axle_unload() {
   add-zsh-hook -d precmd  _axle_precmd
   add-zsh-hook -d precmd  _axle_aistatus_precmd
   add-zsh-hook -d preexec _axle_preexec
+  add-zsh-hook -d preexec _axle_direnv_reorder
   add-zsh-hook -d chpwd   _axle_chpwd
   if (( $+builtins[zle] )); then
     autoload -Uz add-zle-hook-widget
