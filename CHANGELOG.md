@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.0
+
+**The `axle` command**
+- Tab completion for every command and what it takes: variants, palettes, modules, segments,
+  preview scenarios, hook events, drops, settings and their values.
+- `axle help <command>` / `axle <command> --help`: options and examples for each command.
+- Typos get "did you mean": `axle statz` → `axle stats`.
+- `axle config`: list, get, set, unset and edit settings, with values checked and applied at
+  once; with no name, menus to pick a setting and a value.
+- `axle update --check`, and a once-a-day background check that mentions a new version at
+  the next prompt (`AXLE_UPDATE_CHECK=0` turns it off). `axle update` shows the changelog.
+- `axle uninstall`: removes the links and, if you choose, settings, history and cache;
+  never edits `~/.zshrc`.
+- Arrow-key questions (like questionary, in plain zsh) in `axle configure`, `axle config`
+  and `axle uninstall`; the wizard's preview follows the highlighted option.
+
 ## 0.1.5
 
 - Tests: the live suggestion-list test keeps reading the shell's output, which otherwise

@@ -67,60 +67,78 @@ _cf_preview() {
 }
 
 # One choice: _cf_ask <title> <key> <default> <label:value>...  (sets _cf[key])
+# ↑/↓ move (the preview follows), Enter or a number chooses, q / Esc cancels.
 _cf_ask() {
   local title=$1 key=$2 def=$3; shift 3
   local -a labels values
-  local opt mark press
+  local opt mark a=${_axle_c[accent]:-magenta}
   for opt; do labels+=("${opt%:*}"); values+=("${opt##*:}"); done   # label:value (last colon)
-  local -i i n=${#labels} choice=0
+  local -i i n=${#labels} cur=${values[(Ie)$def]}
+  (( cur )) || cur=1
   (( _cf_step++ ))
+  print -n '\e[?25l'
   while :; do
     _cf_header $title
     for i in {1..$n}; do
       mark=' '; [[ ${values[i]} == $def ]] && mark='•'
-      print -r -- "   $mark $i) ${labels[i]}"
+      if (( i == cur )); then
+        _axle_printp "  %F{$a}❯ $mark $i) ${labels[i]//\%/%%}%f"
+      else
+        print -r -- "    $mark $i) ${labels[i]}"
+      fi
     done
+    _cf[$key]=${values[cur]}                      # the preview shows the highlighted one
     _cf_preview ${=_cf_scenes}
     print
-    print -rn -- " Choose 1-$n (Enter = •): "
-    read -rsk press || exit 1
-    case $press in
-      $'\n'|$'\r') choice=${values[(Ie)$def]} ;;
-      [1-9])       (( press <= n )) && choice=$press ;;
-      q|$'\e')     exit 1 ;;
+    _cf_muted " ↑↓ move · Enter chooses · 1-$n · • = current · q cancels"
+    _axle_ui_key
+    case $REPLY in
+      up|k)       (( cur = cur > 1 ? cur - 1 : n )) ;;
+      down|j|tab) (( cur = cur < n ? cur + 1 : 1 )) ;;
+      [1-9])      (( REPLY <= n )) && { cur=$REPLY; break } ;;
+      enter)      break ;;
+      q|esc)      print -n '\e[?25h'; exit 1 ;;
     esac
-    (( choice )) && break
   done
-  _cf[$key]=${values[choice]}
+  print -n '\e[?25h'
+  _cf[$key]=${values[cur]}
   _cf_note='' _cf_scenes=''
 }
 
-# Several on/off choices: _cf_toggle <title> <key> <on by default> <name:description>...
+# Several on/off choices: _cf_toggle <title> <key> <"on names"> <name:description>...
+# ↑/↓ move, Space (or a number) switches one, Enter when done.
 _cf_toggle() {
   local title=$1 key=$2; shift 2
   local -a on=(${=1}) names descs; shift
-  local opt press
+  local opt box a=${_axle_c[accent]:-magenta} ok=${_axle_c[ok]:-green}
   for opt; do names+=("${opt%%:*}"); descs+=("${opt#*:}"); done
-  local -i i n=${#names}
+  local -i i n=${#names} cur=1
   (( _cf_step++ ))
-  _cf_note="Press a number to switch it on or off, then Enter."
+  print -n '\e[?25l'
   while :; do
     _cf_header $title
     for i in {1..$n}; do
-      local box='[ ]'; (( ${on[(Ie)${names[i]}]} )) && box='[x]'
-      print -r -- "   $i) $box ${(r:8:)names[i]} ${descs[i]}"
+      box='○'; (( ${on[(Ie)${names[i]}]} )) && box="%F{$ok}●%f"
+      if (( i == cur )); then
+        _axle_printp "  %F{$a}❯%f $box %F{$a}${(r:8:)names[i]}%f ${descs[i]//\%/%%}"
+      else
+        _axle_printp "    $box ${(r:8:)names[i]} ${descs[i]//\%/%%}"
+      fi
     done
     print
-    print -rn -- " 1-$n toggles, Enter when done: "
-    read -rsk press || exit 1
-    case $press in
-      $'\n'|$'\r') break ;;
-      [1-9])
-        (( press <= n )) || continue
-        if (( ${on[(Ie)${names[press]}]} )); then on=(${on:#${names[press]}}); else on+=(${names[press]}); fi ;;
-      q|$'\e') exit 1 ;;
+    _cf_muted " ↑↓ move · Space switches · Enter when done · q cancels"
+    _axle_ui_key
+    case $REPLY in
+      up|k)       (( cur = cur > 1 ? cur - 1 : n )) ;;
+      down|j|tab) (( cur = cur < n ? cur + 1 : 1 )) ;;
+      space|x|[1-9])
+        [[ $REPLY == [1-9] ]] && { (( REPLY <= n )) || continue; cur=$REPLY }
+        if (( ${on[(Ie)${names[cur]}]} )); then on=(${on:#${names[cur]}}); else on+=(${names[cur]}); fi ;;
+      enter)      break ;;
+      q|esc)      print -n '\e[?25h'; exit 1 ;;
     esac
   done
+  print -n '\e[?25h'
   local -a ordered=()
   for opt in $names; do (( ${on[(Ie)$opt]} )) && ordered+=($opt); done
   _cf[$key]="$ordered"

@@ -12,6 +12,8 @@ prompt. Together, each makes the other better.
 
 - [Install](#install)
 - [The axle command](#the-axle-command)
+  - [Settings: axle config](#settings-axle-config)
+  - [Updates and uninstalling](#updates-and-uninstalling)
 - [Benzene, the prompt](#benzene-the-prompt)
   - [NoxA (nox)](#noxa-nox)
   - [AxoN (axon)](#axon-axon)
@@ -61,10 +63,14 @@ checks the setup; `axle update` updates.
 ## The `axle` command
 
 One command for both parts. With only Benzene loaded it has the prompt's subcommands; the tool
-adds its own. `axle help` lists what's available.
+adds its own. `axle help` lists what's available, `axle help <command>` (or
+`axle <command> --help`) shows a command's options with examples, and **Tab** completes
+everything: commands, variants, modules, segments, preview scenarios, settings and their values.
+A typo gets an answer instead of a wall of text: `axle statz` → *did you mean: axle stats?*
 
 ```zsh
 axle configure      # set up whatever's installed, step by step (prompt with a live preview)
+axle config         # see and change single settings
 axle preview        # view and test every state of the prompt
 axle variant axon   # switch variant (nox / axon)
 axle jump api       # (or just `j api`) go to the folder you mean
@@ -72,10 +78,43 @@ axle history        # recent commands: when, outcome, run time, folder
 axle stats          # what you run, what's slow, what fails, where you work
 axle doctor         # check the setup
 axle module         # list modules; `axle module off env` / `on env`
-axle update         # git pull, then reload
+axle update         # git pull, then reload (--check: only say what's new)
 axle version        # which version, and what's loaded
 axle reload         # re-read Axle's files
+axle uninstall      # remove Axle (asks first)
 ```
+
+Questions (in `axle configure`, `axle config set`, `axle uninstall`) are answered with the
+arrow keys: ↑/↓ to move, Space to tick a box, Enter to answer, Esc to cancel. The wizard's
+preview follows the option you're on.
+
+### Settings: axle config
+
+```zsh
+axle config                          # every setting, its value, and where it comes from
+axle config get AXLE_PALETTE         # what it does, its value and default
+axle config set AXLE_PALETTE classic # save it and apply it now
+axle config set AXLE_MODULES suggest jump   # a list: several words
+axle config set                      # pick a setting and a value from menus
+axle config unset AXLE_PALETTE       # back to the default
+axle config edit                     # open the file in $EDITOR
+```
+
+Settings are saved to `~/.config/axle/config.zsh`, which is read after `~/.zshrc`, so it wins.
+Values are checked (a choice must be one of its options, a switch 0 or 1) and written quoted, so
+the file stays plain data whatever a value contains.
+
+### Updates and uninstalling
+
+Once a day, in the background, Axle checks whether a new version is out, and if so the next
+prompt says so, once: `axle 0.2.1 is out (you have 0.2.0): axle update`. It never waits on the
+network or asks for a password. `axle update --check` asks right away and shows the changelog;
+`AXLE_UPDATE_CHECK=0` turns the daily check off.
+
+`axle uninstall` removes the links `install.sh` made in oh-my-zsh, then asks which of your
+settings, recorded history and cache to delete. It never edits `~/.zshrc`: it lists the lines to
+remove. (`--yes` removes the links and cache without asking; `--purge` everything.) Axle's own
+folder is left for you to delete.
 
 # Benzene, the prompt
 
@@ -665,7 +704,8 @@ axle.plugin.zsh        the axle tool (oh-my-zsh plugin / plugin managers / sourc
 benzene.zsh-theme      the Benzene prompt (oh-my-zsh theme / source)
 axle.zsh-theme         the old name: loads both
 install.sh             choose tool / prompt / both; links it in, removes the rest, runs the wizard
-lib/                   shared by both: helpers, the `axle` command, the setup wizard
+lib/                   shared by both: the `axle` command, help, settings, Tab completion,
+                       prompts (ui.zsh), the setup wizard, helpers
 benzene/               the prompt: nox.zsh, axon.zsh, more.zsh (more segments),
                        segments.zsh (yours + drops), aistatus.zsh, preview.zsh, tmux.conf
 core/                  the tool's core: events.zsh (events, hooks, history log), commands.zsh
