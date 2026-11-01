@@ -1,0 +1,8 @@
+[project]
+name = "tool"
+
+[project.scripts]
+tool = "tool.cli:main"
+
+[build-system]
+requires = ["hatchling"]

@@ -148,7 +148,7 @@ Each milestone ends with its tests passing (Linux + macOS CI) and is usable on i
   markers (usable without the theme), `env`'s venv entering, `j`'s ranking.
 - **Done when:** `axle run --dry-run` prints the project, root and why.
 
-### M1 · Find and run
+### M1 · Find and run ✔
 - `axle run`, `axle run <words>`, `axle run .`: the decision flow above.
 - Detection for Python, Node, Rust, Go, static sites; service vs task.
 - Tasks run in the foreground in the project's venv.

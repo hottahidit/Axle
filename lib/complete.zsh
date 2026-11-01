@@ -81,7 +81,7 @@ _axle_complete() {
         '--purge[also settings and history, no questions]' ;;
     run)
       if [[ $PREFIX == -* ]]; then
-        _values option '--dry-run[say which project, and why]'
+        _values option '--dry-run[say what would run, and why]' '--yes[run without asking]'
       elif (( $+functions[_axle_jump_complete] )); then
         shift words; (( CURRENT-- ))
         _axle_jump_complete

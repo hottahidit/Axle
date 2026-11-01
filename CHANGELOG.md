@@ -5,9 +5,19 @@
 `axle run`, from the Legionary project launcher (plan: `docs/legionary/ROADMAP.md`).
 
 - New module **run** (off by default while in progress; `axle module on run`):
-  `axle run --dry-run` says which project it would run, where its root is, and why: the
-  project you name (`axle run shop`, ranked by where you work, like `j`), a path you give,
-  the one you're in, or else the last one you worked in (from the history log).
+  - Which project: the one you name (`axle run shop`, ranked by where you work, like `j`),
+    a path you give, the one you're in, or else the last one you worked in (from the
+    history log); `axle run` from anywhere takes you back there.
+  - How to run it, detected from the files: package.json `dev` / `start` scripts (npm,
+    pnpm, yarn or bun by lockfile; Vite, Next.js, Nuxt, Astro, Remix, Angular, express, ...
+    known as servers, with their ports), FastAPI / Starlette (uvicorn), Flask, Django,
+    Streamlit, Gradio, Dash, a single `[project.scripts]` entry, `main.py`, Rust (axum,
+    actix-web, Rocket, warp as servers), Go (gin, echo, fiber, chi, `ListenAndServe`), and
+    a lone `index.html`. Ports from the code when written there.
+  - Runs in the foreground, in the project's root and its venv (never `activate`).
+  - Asks before a project's command runs the first time, and remembers per project and
+    command; a changed package.json script asks again. `--yes` skips the question.
+  - `axle run --dry-run` says which project, why, what would run and how.
 - Shared helpers, so each works without the other part: project markers and venv finding
   (`lib/project.zsh`, used by Benzene, `env` and `run`), and `j`'s folder ranking
   (`lib/rank.zsh`, used by `j` and `run`). Both load on first use.

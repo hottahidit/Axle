@@ -1,0 +1,287 @@
+# How to run a project: the detection table of docs/legionary/ROADMAP.md (M1: Python,
+# Node, Rust, Go, static sites). Loaded by `axle run` when first needed.
+#
+# Files are only read, as text (never sourced or run), and only small ones.
+#
+#   _axle_run_detect <root>   status 0 when it found a way; sets:
+#     _axle_run_cmd     the command, as words (run with exec, never eval)
+#     _axle_run_kind    service (a server: background from M2) | task (foreground)
+#     _axle_run_port    the port it listens on, when known
+#     _axle_run_what    e.g. "python · FastAPI", "node · Vite (pnpm)"
+#     _axle_run_reason  why, e.g. "app.py imports fastapi"
+#     _axle_run_source  the text that decides what runs (e.g. the package.json script),
+#                       part of what trust remembers: if it changes, `axle run` asks again
+
+# A file's text into REPLY, if it's a regular file under 256 KB. No subprocess.
+_axle_run_read() {
+  REPLY=''
+  local -a st
+  [[ -f $1 && -r $1 ]] || return 1
+  zstat -A st +size -- $1 2>/dev/null && (( st[1] < 262144 )) || return 1
+  IFS= read -rd '' REPLY < $1
+  return 0
+}
+
+# A port written in code or config (REPLY): host:port in a string, or port=/port: N.
+_axle_run_code_port() {
+  setopt localoptions extendedglob
+  local text=$1
+  REPLY=''
+  if [[ $text == (#b)*(localhost|127.0.0.1|0.0.0.0|\[::\]|\"|\')':'([0-9](#c4,5))([^0-9]*|) ]]; then
+    REPLY=$match[2]
+  elif [[ $text == (#b)*[^a-zA-Z_](port|PORT)[[:space:]]#[=:\(][[:space:]]#([0-9](#c4,5))([^0-9]*|) ]]; then
+    REPLY=$match[2]
+  fi
+  [[ -n $REPLY ]]
+}
+
+# The Python to use (REPLY): the project venv's, else python3, else python.
+_axle_run_python() {
+  local root=$1
+  if _axle_venv_in $root && [[ -x $REPLY/bin/python ]]; then
+    REPLY=$REPLY/bin/python
+  elif whence -p python3 >/dev/null; then REPLY=python3
+  else REPLY=python
+  fi
+}
+
+_axle_run_set() {
+  _axle_run_kind=$1 _axle_run_port=$2 _axle_run_what=$3 _axle_run_reason=$4
+}
+
+_axle_run_detect() {
+  setopt localoptions extendedglob
+  local root=$1 REPLY
+  typeset -ga _axle_run_cmd=()
+  typeset -g _axle_run_kind='' _axle_run_port='' _axle_run_what='' _axle_run_reason='' _axle_run_source=''
+  _axle_run_detect_node $root   && return 0
+  _axle_run_detect_python $root && return 0
+  _axle_run_detect_rust $root   && return 0
+  _axle_run_detect_go $root     && return 0
+  if [[ -f $root/index.html ]]; then
+    _axle_run_python $root
+    _axle_run_cmd=($REPLY -m http.server 8000)
+    _axle_run_set service 8000 'static site' 'index.html'
+    return 0
+  fi
+  return 1
+}
+
+# --- Node -------------------------------------------------------------------------
+
+_axle_run_detect_node() {
+  local root=$1 REPLY
+  _axle_run_read $root/package.json || return 1
+  local pkg=$REPLY pm=npm
+  if   [[ -f $root/pnpm-lock.yaml ]]; then pm=pnpm
+  elif [[ -f $root/yarn.lock ]]; then pm=yarn
+  elif [[ -f $root/bun.lockb || -f $root/bun.lock ]]; then pm=bun
+  fi
+  local scripts='' name='' body=''
+  [[ $pkg =~ '"scripts"[[:space:]]*:[[:space:]]*\{([^}]*)\}' ]] && scripts=$match[1]
+  for name in dev start; do
+    [[ $scripts =~ "\"$name\"[[:space:]]*:[[:space:]]*\"([^\"]*)\"" ]] && { body=$match[1]; break }
+  done
+  local fw='' port=''
+  if [[ -n $body ]]; then
+    case $body in                                  # first match wins: specific ones first
+      *remix*)                      fw=Remix port=3000 ;;
+      *astro*)                      fw=Astro port=4321 ;;
+      *nuxt*|*nuxi*)                fw=Nuxt port=3000 ;;
+      *next\ *|next)                fw=Next.js port=3000 ;;
+      *vite*)                       fw=Vite port=5173 ;;
+      *ng\ serve*)                  fw=Angular port=4200 ;;
+      *react-scripts\ start*)       fw='Create React App' port=3000 ;;
+      *webpack\ serve*|*webpack-dev-server*) fw=webpack port=8080 ;;
+      *nest\ start*)                fw=NestJS port=3000 ;;
+      *gatsby\ develop*)            fw=Gatsby port=8000 ;;
+      *parcel*)                     fw=Parcel port=1234 ;;
+    esac
+    # A plain node/nodemon script of a server framework.
+    if [[ -z $fw && $body == *(node|nodemon|tsx|ts-node)\ * ]]; then
+      _axle_run_node_server "$pkg" && fw=$REPLY port=3000
+    fi
+    [[ $body == (#b)*(--port|-p)[=\ ]([0-9](#c2,5))* ]] && port=$match[2]
+    _axle_run_cmd=($pm run $name)
+    _axle_run_source=$body
+    if [[ -n $fw ]]; then
+      _axle_run_set service $port "node · $fw ($pm)" "package.json script $name: $body"
+    else
+      _axle_run_set task '' "node ($pm)" "package.json script $name: $body"
+    fi
+    return 0
+  fi
+  # No script: the entry file.
+  local main='' f
+  [[ $pkg =~ '"main"[[:space:]]*:[[:space:]]*"([^"]*)"' ]] && main=$match[1]
+  for f in $main server.js app.js index.js main.js; do
+    [[ -n $f && $f != (/*|-*|*..*) && -f $root/$f ]] || continue
+    _axle_run_cmd=(node $f)
+    if _axle_run_node_server "$pkg"; then
+      fw=$REPLY port=3000
+      _axle_run_read $root/$f && _axle_run_code_port "$REPLY" && port=$REPLY
+      _axle_run_set service $port "node · $fw" "$f, with $fw in package.json"
+    else
+      _axle_run_set task '' node "$f"
+    fi
+    return 0
+  done
+  return 1
+}
+
+# A server framework among a package.json's dependencies (REPLY = its name).
+_axle_run_node_server() {
+  local fw
+  for fw in express fastify koa hono @hapi/hapi; do
+    [[ $1 == *\"$fw\"[[:space:]]#:* ]] && { REPLY=$fw; return 0 }
+  done
+  return 1
+}
+
+# --- Python -----------------------------------------------------------------------
+
+_axle_run_detect_python() {
+  local root=$1 REPLY py
+  _axle_run_python $root; py=$REPLY
+  if [[ -f $root/manage.py ]]; then
+    _axle_run_cmd=($py manage.py runserver)
+    _axle_run_set service 8000 'python · Django' 'manage.py'
+    return 0
+  fi
+  # Web apps: the likely entry files first, then the rest at the top and one level down.
+  local -a files=($root/(main|app|server|api|asgi|wsgi|run|streamlit_app).py(N.)
+                  $root/*.py(N.) $root/(app|api|src|server|backend)/*.py(N.))
+  files=(${(u)files})
+  local f text line var='' fw='' rel
+  for f in ${files[1,40]}; do
+    [[ ${f:t} == -* ]] && continue                 # (would read as an option)
+    _axle_run_read $f || continue
+    text=$REPLY
+    [[ $text == *(fastapi|starlette|flask|streamlit|gradio|dash)* ]] || continue
+    fw=''
+    for line in ${(f)text}; do
+      case $line in
+        ([[:space:]]#(from|import)[[:space:]]##fastapi*)    fw=FastAPI ;;
+        ([[:space:]]#(from|import)[[:space:]]##starlette*)  fw=${fw:-Starlette} ;;
+        ([[:space:]]#(from|import)[[:space:]]##flask*)      fw=${fw:-Flask} ;;
+        ([[:space:]]#(from|import)[[:space:]]##streamlit*)  fw=Streamlit ;;
+        ([[:space:]]#(from|import)[[:space:]]##gradio*)     fw=${fw:-Gradio} ;;
+        ([[:space:]]#(from|import)[[:space:]]##dash*)       fw=${fw:-Dash} ;;
+      esac
+    done
+    [[ -n $fw ]] || continue
+    rel=${f#$root/}
+    local port=''
+    case $fw in
+      FastAPI|Starlette)
+        var=app
+        for line in ${(f)text}; do
+          [[ $line == (#b)([A-Za-z_][A-Za-z0-9_]#)[[:space:]]#=[[:space:]]#(fastapi.|starlette.applications.|)(FastAPI|Starlette)\(* ]] &&
+            { var=$match[1]; break }
+        done
+        _axle_run_cmd=($py -m uvicorn ${${rel%.py}//\//.}:$var --reload)
+        port=8000 ;;
+      Flask)
+        _axle_run_cmd=($py -m flask --app $rel run --debug)
+        port=5000 ;;
+      Streamlit) _axle_run_cmd=($py -m streamlit run $rel); port=8501 ;;
+      Gradio)    _axle_run_cmd=($py $rel); port=7860 ;;
+      Dash)      _axle_run_cmd=($py $rel); port=8050 ;;
+    esac
+    # A port in the code (uvicorn.run(port=…), app.run(port=…)) wins, except Streamlit's.
+    if [[ $fw != Streamlit ]] && _axle_run_code_port "$text"; then
+      port=$REPLY
+      [[ $fw == (FastAPI|Starlette) ]] && _axle_run_cmd+=(--port $port)
+      [[ $fw == Flask ]] && _axle_run_cmd+=(--port $port)
+    fi
+    _axle_run_set service $port "python · $fw" "$rel imports ${(L)fw}"
+    return 0
+  done
+  # One [project.scripts] entry in pyproject.toml.
+  if _axle_run_read $root/pyproject.toml; then
+    local -a entries=()
+    local in=0
+    for line in ${(f)REPLY}; do
+      if [[ $line == [[:space:]]#\[* ]]; then
+        [[ $line == [[:space:]]#'[project.scripts]'* ]] && in=1 || in=0
+        continue
+      fi
+      (( in )) && [[ $line == (#b)[[:space:]]#([A-Za-z0-9_.\"-]##)[[:space:]]#=* ]] && entries+=(${match[1]//\"/})
+    done
+    if (( ${#entries} == 1 )); then
+      local bin=$entries[1]
+      _axle_venv_in $root && [[ -x $REPLY/bin/$bin ]] && bin=$REPLY/bin/$bin
+      _axle_run_cmd=($bin)
+      _axle_run_source=$entries[1]
+      _axle_run_set task '' python "pyproject.toml script ${entries[1]}"
+      return 0
+    fi
+  fi
+  for f in main.py app.py __main__.py; do
+    [[ -f $root/$f ]] || continue
+    _axle_run_cmd=($py $f)
+    _axle_run_set task '' python $f
+    return 0
+  done
+  return 1
+}
+
+# --- Rust ---------------------------------------------------------------------------
+
+_axle_run_detect_rust() {
+  local root=$1 REPLY
+  _axle_run_read $root/Cargo.toml || return 1
+  local toml=$REPLY line fw='' port=''
+  [[ $toml == *'[package]'* ]] || return 1        # a bare workspace: M4 picks a member
+  for line in ${(f)toml}; do
+    case $line in
+      ([[:space:]]#axum[[:space:]=.]*)      fw=axum port=3000 ;;
+      ([[:space:]]#actix-web[[:space:]=.]*) fw=actix-web port=8080 ;;
+      ([[:space:]]#rocket[[:space:]=.]*)    fw=Rocket port=8000 ;;
+      ([[:space:]]#warp[[:space:]=.]*)      fw=warp port=3030 ;;
+      ([[:space:]]#(#b)(poem|tide|salvo)[[:space:]=.]*) fw=$match[1] port=8080 ;;
+    esac
+    [[ -n $fw ]] && break
+  done
+  _axle_run_cmd=(cargo run)
+  if [[ -n $fw ]]; then
+    _axle_run_read $root/src/main.rs && _axle_run_code_port "$REPLY" && port=$REPLY
+    _axle_run_set service $port "rust · $fw" "Cargo.toml depends on $fw"
+  else
+    _axle_run_set task '' rust 'Cargo.toml'
+  fi
+  return 0
+}
+
+# --- Go -----------------------------------------------------------------------------
+
+_axle_run_detect_go() {
+  local root=$1 REPLY
+  _axle_run_read $root/go.mod || return 1
+  local mod=$REPLY fw='' f port=''
+  case $mod in
+    *gin-gonic/gin*)  fw=gin ;;
+    *labstack/echo*)  fw=echo ;;
+    *gofiber/fiber*)  fw=fiber ;;
+    *go-chi/chi*)     fw=chi ;;
+    *gorilla/mux*)    fw=gorilla/mux ;;
+  esac
+  # The file that starts the server: its port, and (without a framework) proof it's one.
+  for f in $root/*.go(N.) $root/cmd/*/*.go(N.); do
+    _axle_run_read $f || continue
+    if [[ $REPLY == *ListenAndServe* ]]; then
+      fw=${fw:-net/http}
+    elif [[ -z $fw || $REPLY != *(.Run\(|.Start\(|.Listen\()* ]]; then
+      continue
+    fi
+    _axle_run_code_port "$REPLY" && port=$REPLY
+    break
+  done
+  _axle_run_cmd=(go run .)
+  if [[ -n $fw ]]; then
+    _axle_run_set service ${port:-8080} "go · $fw" "${${fw:#net/http}:+go.mod requires $fw}${${(M)fw:#net/http}:+the code calls ListenAndServe}"
+  else
+    _axle_run_set task '' go 'go.mod'
+  fi
+  return 0
+}
