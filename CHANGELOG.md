@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.3
+
+- macOS: the Haskell (stack) segment used a `sed` feature macOS doesn't have.
+- macOS: the tests and `axle preview` now handle a temp folder ending in `/`, and the tests
+  pick a UTF-8 locale that exists (macOS has no `C.UTF-8`).
+- CI: failures are shown as annotations on the run's page; `actions/checkout@v5`.
+- README: a broken table row, a duplicated setting, the preview scenario count.
+
 ## 0.1.2
 
 **Tests and CI**

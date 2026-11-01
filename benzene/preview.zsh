@@ -24,7 +24,7 @@ _pv_add() { _pv_names+=($1); _pv_titles+=("$2") }
 # --- throwaway repositories ----------------------------------------------------
 
 _pv_setup() {
-  _pv_dir=$(mktemp -d "${TMPDIR:-/tmp}/axle-preview.XXXXXX") || return 1
+  _pv_dir=$(mktemp -d "${${TMPDIR:-/tmp}%/}/axle-preview.XXXXXX") || return 1
   # Deterministic git: none of your config (signing, hooks, templates) applies here.
   export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_TERMINAL_PROMPT=0
   export GIT_AUTHOR_NAME=Axle GIT_AUTHOR_EMAIL=axle@example.com

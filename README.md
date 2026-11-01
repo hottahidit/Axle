@@ -265,8 +265,8 @@ NoxA uses [Catppuccin Mocha](https://catppuccin.com/palette) by default, and eac
 | sky | sync | ahead/behind upstream |
 | blue | location | the path |
 | mauve | accent | the frame + arrow, one piece (red after a failure, deep red at 80%+ RAM) |
-| pink | remote infra | kube, docker, aws, gcp, terraform (where your commands land) |
-| teal, flamingo, sapphire, rosewater, lavender | languages | python, node, go, rust, nix |
+| pink | remote infra | kube, docker, aws, gcp, terraform, Azure, Beanstalk (where your commands land) |
+| teal, flamingo, sapphire, rosewater, lavender, maroon, ... | languages | python, node, go, rust, nix, ruby, java, ... (each its own) |
 | overlay | quiet | separators, untracked, clock, push protocol |
 | red pill | alarm | failure, root, production context, low battery, conflicts, bad signature |
 | deep red | memory pressure | frame + arrow at 80%+ RAM (Catppuccin Latte red, darker than Mocha's) |
@@ -345,7 +345,6 @@ AXLE_PATH_DEPTH=4                 # path components kept before eliding the midd
 AXLE_DETAIL_KEY='^[i'             # expand key (Alt-i); '' to disable
 AXLE_LINKS=1                      # 0 = no clickable path/branch
 AXLE_ICON_WIDTH=2                 # columns per Nerd Font icon (default: asked from the terminal)
-AXLE_ICON_WIDTH=2                 # columns a Nerd Font icon takes (default: 2 in Windows Terminal, else measured)
 AXLE_NOTIFY_SECS=30               # ring the terminal bell after long commands (default 0 = off)
 AXLE_GIT_ASYNC=1                  # 0 = compute git status synchronously
 AXLE_GIT_UNTRACKED=1              # 0 = skip untracked files (much faster in huge repos)
@@ -407,13 +406,13 @@ it now overrides. `install.sh` starts it for you when the tool is installed.
 
 ## Previewing every state
 
-`axle preview` shows the prompt in every situation it handles (25 scenarios), drawn in your own
+`axle preview` shows the prompt in every situation it handles (30 scenarios), drawn in your own
 terminal with your font, palette and settings, so you can see exactly how each one looks:
 
 ```
  Axle preview  nox · mocha · Nerd Font icons · 100 cols
  ──────────────────────────────────────────────────────
- 18/25  Production kube context + AWS profile (alarms)  (prod)
+ 18/30  Production kube context + AWS profile (alarms)  (prod)
  ╭─ ~/repos/clean │ main │ ⎈ eks-prod:payments │ aws production@eu-west-1    12:43
  ╰─➜  git status
    past: 12:43:07 ~/repos/clean ➜  git status
@@ -506,7 +505,7 @@ Suggestions come from strategies, tried in order until there are enough:
 | `AXLE_SUGGEST` | `1` | `0` turns it off |
 | `AXLE_SUGGEST_STRATEGY` | `(smart history completion)` | which strategies, in order |
 | `AXLE_SUGGEST_STYLE` | muted grey | how it looks, e.g. `'fg=#6c7086,underline'` |
-| `AXLE_SUGGEST_IGNORE` | | a zsh pattern of lines never suggested, e.g. `'(cd|rm) *'` |
+| `AXLE_SUGGEST_IGNORE` | | a zsh pattern of lines never suggested, e.g. `'(cd\|rm) *'` |
 | `AXLE_SUGGEST_MAX_BUFFER` | `0` | no suggestions past this many characters (0 = any) |
 | `AXLE_SUGGEST_LIST` | `5` | options in the Ctrl-N list (1 = no list) |
 

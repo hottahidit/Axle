@@ -218,8 +218,8 @@ _axle_seg_flutter() {
 _axle_seg_haskell() {
   _axle_has_marker stack.yaml || return
   local f=$_axle_markers[stack.yaml]/stack.yaml
-  _axle_cached "stack:$f" $f command sed -n \
-    's/^\(resolver\|snapshot\):[[:space:]]*\([^[:space:]#]*\).*/\2/p'
+  _axle_cached "stack:$f" $f command sed -n -E \
+    's/^(resolver|snapshot):[[:space:]]*([^[:space:]#]*).*/\2/p'
   local -a found=("${(@f)REPLY}"); local v=$found[1]; REPLY=''
   v=${${v:t}%.yaml}                       # a URL or file: its name
   [[ -n $v ]] || return
