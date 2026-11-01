@@ -11,6 +11,10 @@
 #     _axle_run_reason  why, e.g. "app.py imports fastapi"
 #     _axle_run_source  the text that decides what runs (e.g. the package.json script),
 #                       part of what trust remembers: if it changes, `axle run` asks again
+#     _axle_run_portway how its port can be changed (for a busy port): flag:<flag>,
+#                       script:<flag> (a package.json script's), django, last (the last
+#                       word), env:<VAR>, or empty (it can't be)
+#     _axle_run_env     extra environment for it (NAME=value), e.g. a changed port
 
 # A file's text into REPLY, if it's a regular file under 256 KB. No subprocess.
 _axle_run_read() {
@@ -50,10 +54,17 @@ _axle_run_set() {
 }
 
 _axle_run_detect() {
+  typeset -ga _axle_run_cmd=() _axle_run_env=()
+  typeset -g _axle_run_kind='' _axle_run_port='' _axle_run_what='' _axle_run_reason='' \
+             _axle_run_source='' _axle_run_portway=''
+  _axle_run_detect_any $1 || return 1
+  _axle_run_detect_port $1
+  return 0
+}
+
+_axle_run_detect_any() {
   setopt localoptions extendedglob
   local root=$1 REPLY
-  typeset -ga _axle_run_cmd=()
-  typeset -g _axle_run_kind='' _axle_run_port='' _axle_run_what='' _axle_run_reason='' _axle_run_source=''
   _axle_run_detect_node $root   && return 0
   _axle_run_detect_python $root && return 0
   _axle_run_detect_rust $root   && return 0
@@ -65,6 +76,51 @@ _axle_run_detect() {
     return 0
   fi
   return 1
+}
+
+# The port, and how to change it, for what was detected. The port already found comes
+# from the command, the code or the framework's default; PORT in .env wins for programs
+# that read PORT, and vite.config's server.port for Vite.
+_axle_run_detect_port() {
+  setopt localoptions extendedglob
+  local root=$1 REPLY f
+  [[ $_axle_run_kind == service ]] || return 0
+  local fw=${_axle_run_what#* · }; fw=${fw% \(*\)}
+  local body=$_axle_run_source
+  case $_axle_run_what in
+    'python · '(FastAPI|Starlette|Flask)) _axle_run_portway=flag:--port ;;
+    'python · Django')                   _axle_run_portway=django ;;
+    'python · Streamlit')                _axle_run_portway=flag:--server.port ;;
+    'python · Gradio')                   _axle_run_portway=env:GRADIO_SERVER_PORT ;;
+    'python · Dash')                     _axle_run_portway=env:PORT ;;
+    'static site')                       _axle_run_portway=last ;;
+    'node · '*)
+      case $fw in
+        Vite|Astro|Nuxt|Angular|Remix|Parcel|webpack|SvelteKit) _axle_run_portway=script:--port ;;
+        Next.js|Gatsby)                                         _axle_run_portway=script:-p ;;
+        *)                                                      _axle_run_portway=env:PORT ;;
+      esac
+      # A script that sets its own port: giving it a second one isn't safe.
+      [[ $_axle_run_portway == script:* && $body == *(--port|-p)[=\ ][0-9]* ]] && _axle_run_portway=''
+      if [[ $fw == Vite ]]; then
+        for f in $root/vite.config.(ts|js|mjs|mts|cjs)(N.); do
+          _axle_run_read $f && [[ $REPLY == *server* ]] && _axle_run_code_port "$REPLY" &&
+            { _axle_run_port=$REPLY; break }
+        done
+      fi ;;
+    'rust · '*)
+      _axle_run_read $root/src/main.rs && [[ $REPLY == *env::var\(\"PORT\"\)* ]] && _axle_run_portway=env:PORT ;;
+    'go · '*)
+      for f in $root/*.go(N.) $root/cmd/*/*.go(N.); do
+        _axle_run_read $f && [[ $REPLY == *Getenv\(\"PORT\"\)* ]] && { _axle_run_portway=env:PORT; break }
+      done ;;
+  esac
+  if [[ $_axle_run_portway == env:PORT ]]; then
+    local -a reply
+    (( $+functions[_axle_run_envfile] )) && _axle_run_envfile $root/.env &&
+      for f in $reply; do [[ $f == (#b)PORT=([0-9](#c2,5)) ]] && _axle_run_port=$match[1]; done
+  fi
+  return 0
 }
 
 # --- Node -------------------------------------------------------------------------

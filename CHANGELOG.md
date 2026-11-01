@@ -21,6 +21,11 @@
     a tab: `⏳ name` while starting, `⚡ name :port` once the port answers (Ctrl+click
     opens it; the port a dev server prints, if it picked another), red if it exits with
     an error. They keep running when the terminal closes.
+  - Ports: read from the command, the code, `vite.config`, `PORT` in `.env`, or the
+    framework's default. A taken port says who has it (one of your services, or which
+    program: `/proc` on Linux, `lsof` on macOS) and offers the next free port (passed the
+    way the framework takes it: `--port`, `-p`, `-- --port` for npm, `PORT`, ...),
+    stopping the other, or cancel; without a terminal, the next free port.
   - `axle run ls` (state, port, uptime, memory, URL), `stop [name|all]`, `restart`,
     `logs [-f]` (which also clears a red tab) and `open`; `--fg` / `--bg` to choose.
   - Asks before a project's command runs the first time, and remembers per project and

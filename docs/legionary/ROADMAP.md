@@ -167,7 +167,7 @@ Each milestone ends with its tests passing (Linux + macOS CI) and is usable on i
 - **Done when:** start → appears in the prompt → `ls` shows it → `stop` removes it → a crash
   turns the tab red; nothing left behind after `stop all`.
 
-### M3 · Ports
+### M3 · Ports ✔
 - Port detection (code, config, `.env`, defaults); "up" check by connecting.
 - Who holds a port: `/proc/net/tcp` on Linux (no subprocess), `lsof` on macOS.
 - Conflict: one of yours → restart it; someone else's → stop it (asks) / next free port / cancel.

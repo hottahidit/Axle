@@ -225,7 +225,14 @@ _axle_cmd_run() {
         print -r -- "  kind   task (runs in the foreground)"
       fi
       _axle_run_name $root
-      _axle_run_alive $_axle_run_dir/services/$REPLY && print -r -- "  now    running as $REPLY (axle run ls)"
+      if _axle_run_alive $_axle_run_dir/services/$REPLY; then
+        print -r -- "  now    running as $REPLY (axle run ls)"
+      elif [[ -n $_axle_run_port ]] && _axle_run_port_up $_axle_run_port; then
+        local who='something else'
+        if _axle_run_port_service $_axle_run_port; then who="your service $REPLY"
+        elif _axle_run_port_holder $_axle_run_port; then who="$_axle_run_holder (pid $REPLY)"; fi
+        print -r -- "  port   $_axle_run_port is taken by $who: axle run would ${${_axle_run_portway:+offer the next free one}:-ask what to do}"
+      fi
       _axle_run_trust_key $root
       _axle_run_trusted $REPLY || print -r -- "  trust  not run before: axle run asks first"
     else
@@ -271,8 +278,11 @@ _axle_cmd_run() {
   [[ $mode == bg ]] && bg=1
   if (( bg )); then
     _axle_run_name $root
-    _axle_printp "%F{$muted}▶ ${show//\%/%%}%f"
-    _axle_run_bg $root $REPLY
+    local svc=$REPLY
+    _axle_run_resolve_port $root $svc || return 1
+    _axle_run_show $root
+    _axle_printp "%F{$muted}▶ ${${REPLY}//\%/%%}${_axle_run_env:+ (${(j:, :)_axle_run_env})}%f"
+    _axle_run_bg $root $svc
     return
   fi
   _axle_printp "%F{$muted}▶ ${show//\%/%%}%f"

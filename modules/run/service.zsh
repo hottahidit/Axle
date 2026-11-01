@@ -214,8 +214,11 @@ _axle_run_start() {
   [[ -f $dir/log ]] && zstat -A st +size -- $dir/log 2>/dev/null && (( st[1] > 5242880 )) &&
     command mv -f -- $dir/log $dir/log.1
 
+  # The environment: .env values (data), then what axle run sets (e.g. a changed port).
   local -a envs=()
   _axle_run_envfile $root/.env && envs=($reply)
+  envs+=($_axle_run_env)
+  (( ${#_axle_run_env} )) && print -rn -- "${(pj:\0:)_axle_run_env}" >| $dir/env
   # The supervisor is a fresh, non-interactive zsh, not a subshell of this one: a subshell
   # of an interactive shell keeps its terminal open and fails once the terminal closes.
   local zsh_bin=${commands[zsh]:-zsh}
@@ -253,7 +256,7 @@ _axle_run_supervise() {
     unset PYTHONHOME
   fi
   [[ -n $port ]] && export PORT=$port
-  for e in $envs; do export "$e"; done             # .env values: data, set as given
+  for e in $envs; do export "$e"; done             # .env values (data) and ours, as given
   "${cmd[@]}" &
   local -i spid=$!
   _axle_run_pstart $spid && _axle_run_put $dir pstart $REPLY
@@ -413,9 +416,12 @@ _axle_run_restart() {
   _axle_run_get $dir kind; kind=$REPLY
   [[ -r $dir/cmd ]] || { print -u2 "axle run: don't know how $name was started"; return 1 }
   local cmd; IFS= read -rd '' cmd < $dir/cmd
-  local -a words=("${(@0)cmd}")
+  local -a words=("${(@0)cmd}") extra=()
+  if [[ -r $dir/env ]]; then
+    local e; IFS= read -rd '' e < $dir/env; extra=("${(@0)e}")
+  fi
   _axle_run_stop_one $name
-  typeset -ga _axle_run_cmd=($words)
+  typeset -ga _axle_run_cmd=($words) _axle_run_env=($extra)
   typeset -g _axle_run_port=$port _axle_run_kind=${kind:-service}
   _axle_run_bg $root $name
 }

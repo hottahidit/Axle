@@ -434,3 +434,114 @@ test_run_service_survives_closing_the_terminal() {
   kill -0 $pid 2>/dev/null && fail "stop ends it"
   return 0
 }
+
+# --- M3: ports ------------------------------------------------------------------------
+
+test_run_port_ways() {
+  AXLE_MODULES=(run) load_tool
+  fixtures
+  local REPLY c
+  local -a cases=(
+    "fastapi|--port 9001|python3 -m uvicorn main:api --reload --port 9001"
+    "flask|(already --port 5050)|python3 -m flask --app app.py run --debug --port 9001"
+    "django|9001|python3 manage.py runserver 9001"
+    "streamlit|--server.port|python3 -m streamlit run streamlit_app.py --server.port 9001"
+    "vite|pnpm: --port|pnpm run dev --port 9001"
+    "static|last word|python3 -m http.server 9001"
+  )
+  local py=python; whence -p python3 >/dev/null && py=python3
+  for c in $cases; do
+    local name=${c%%|*} want=${${c##*|}//python3/$py}
+    _axle_run_detect $T/fx/$name
+    _axle_run_apply_port 9001 || fail "$name: the port can be changed"
+    _axle_run_show $T/fx/$name
+    assert_eq "$REPLY" "$want" "$name: ${${c#*|}%%|*}"
+    assert_eq "$_axle_run_port" 9001 "$name: the port is remembered"
+  done
+  # npm needs `--` before a script's own options; express takes PORT.
+  print '{"scripts": {"dev": "vite"}}' > $T/fx/vite/package.json; rm $T/fx/vite/pnpm-lock.yaml
+  _axle_run_detect $T/fx/vite; _axle_run_apply_port 9002; _axle_run_show $T/fx/vite
+  assert_eq "$REPLY" "npm run dev -- --port 9002" "npm: -- --port"
+  _axle_run_detect $T/fx/express; _axle_run_apply_port 9003
+  assert_eq "$_axle_run_env" "PORT=9003" "express: PORT"
+  # A script with its own port, or a Rust server that doesn't read PORT: can't be changed.
+  _axle_run_detect $T/fx/next; _axle_run_apply_port 9004 && fail "next -p 3100 sets its own port"
+  _axle_run_detect $T/fx/axum; _axle_run_apply_port 9004 && fail "this axum app has a fixed port"
+  return 0
+}
+
+test_run_port_from_env_and_vite_config() {
+  AXLE_MODULES=(run) load_tool
+  fixtures
+  print 'PORT=4100' > $T/fx/express/.env
+  _axle_run_detect $T/fx/express; assert_eq "$_axle_run_port" 4100 "PORT in .env (for a program that reads it)"
+  print 'export default { server: { port: 5200 } }' > $T/fx/vite/vite.config.ts
+  _axle_run_detect $T/fx/vite; assert_eq "$_axle_run_port" 5200 "vite.config server.port"
+}
+
+test_run_port_holder() {
+  AXLE_MODULES=(run) load_tool
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  [[ -r /proc/net/tcp ]] || whence -p lsof >/dev/null || return 0
+  local REPLY port; free_port; port=$REPLY
+  $py -m http.server $port --bind 127.0.0.1 >/dev/null 2>&1 &
+  local pid=$!
+  local -i i; for i in {1..50}; do _axle_run_port_up $port && break; sleep 0.1; done
+  _axle_run_port_holder $port; local got=$REPLY
+  kill $pid 2>/dev/null
+  assert_eq "$got" "$pid" "the process listening on the port"
+  assert_match "$_axle_run_holder" "(#i)*python*" "and its name"
+}
+
+test_run_two_projects_same_port() {
+  AXLE_MODULES=(run) load_tool
+  local REPLY port; free_port; port=$REPLY
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  # Two static sites whose default port we pin to the same free one.
+  mkdir -p $T/one $T/two
+  print '<!doctype html>' > $T/one/index.html; print '<!doctype html>' > $T/two/index.html
+  : > $T/one/requirements.txt; : > $T/two/requirements.txt
+  functions[_axle_run_detect_orig]=$functions[_axle_run_detect]
+  _axle_run_detect >/dev/null 2>&1 $T/one   # (load the real one)
+  functions[_axle_run_detect_orig]=$functions[_axle_run_detect]
+  _axle_run_detect() { _axle_run_detect_orig "$@" || return 1; _axle_run_cmd[-1]=$port; _axle_run_port=$port }
+  local out
+  cd $T/one; out=$(axle run --yes </dev/null 2>&1) || fail "the first runs: $out"
+  wait_state one up
+  cd $T/two; out=$(axle run --yes </dev/null 2>&1) || fail "the second runs: $out"
+  assert_contains "$out" "Port $port is taken by your service one" "says who has it"
+  wait_state two up
+  assert_eq "$(<$HOME/.local/state/axle/run/services/one/port)" $port "the first on the port"
+  assert_eq "$(<$HOME/.local/state/axle/run/services/two/port)" $(( port + 1 )) "the second on the next one"
+  _axle_run_port_up $port && _axle_run_port_up $(( port + 1 )) || fail "both answer"
+  axle run stop all >/dev/null
+}
+
+# In a terminal the busy port is a question: ↓ Enter picks "Stop one, then run here".
+test_run_port_question_in_a_terminal() {
+  zmodload zsh/zpty 2>/dev/null || return 0
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  AXLE_MODULES=(run) load_tool
+  local REPLY port; free_port; port=$REPLY
+  mkdir -p $T/one $T/two
+  print '<!doctype html>' > $T/one/index.html; print '<!doctype html>' > $T/two/index.html
+  : > $T/one/requirements.txt; : > $T/two/requirements.txt
+  print -l "AXLE_MODULES=(run); source $ROOT/axle.plugin.zsh" \
+    "_axle_run_detect $T/one >/dev/null 2>&1" \
+    'functions[_axle_run_detect_orig]=$functions[_axle_run_detect]' \
+    "_axle_run_detect() { _axle_run_detect_orig \"\$@\" || return 1; _axle_run_cmd[-1]=$port; _axle_run_port=$port }" \
+    > $T/setup.zsh
+  zpty sh "HOME=$HOME XDG_CONFIG_HOME=$XDG_CONFIG_HOME XDG_CACHE_HOME=$XDG_CACHE_HOME XDG_DATA_HOME=$XDG_DATA_HOME HISTFILE=$T/hist TERM=xterm AXLE_UPDATE_CHECK=0 zsh -f -i"
+  zpty -w sh "PS1='> '; source $T/setup.zsh; cd $T/one; axle run --yes; cd $T/two; : > $T/ready"
+  _wait() { local -i i; local c; for i in {1..150}; do while zpty -rt sh c 2>/dev/null; do :; done; [[ -e $1 ]] && return 0; sleep 0.1; done; fail "no answer ($1)" }
+  _wait $T/ready
+  wait_state one up
+  zpty -w sh "axle run --yes; : > $T/done"
+  sleep 1; zpty -n -w sh $'\e[B'; sleep 0.3; zpty -n -w sh $'\r'
+  _wait $T/done
+  wait_state two up
+  [[ -e $HOME/.local/state/axle/run/services/one ]] && fail "one was stopped"
+  assert_eq "$(<$HOME/.local/state/axle/run/services/two/port)" $port "two took its port"
+  zpty -w sh 'axle run stop all; exit'; sleep 0.5; zpty -d sh 2>/dev/null
+  return 0
+}
