@@ -132,23 +132,28 @@ test_suggest_list_opens_on_demand() {
   # and Ctrl-T is avoided: it's the "status" key in macOS terminals.
   zmodload zsh/zpty 2>/dev/null || return 0
   local -i n=0
+  # Keep reading the shell's screen output: unread, it fills the pty (only ~1 KB on macOS)
+  # and the shell stops, waiting for someone to read it.
+  _drain() { local chunk; while zpty -rt sg chunk 2>/dev/null; do :; done }
   _await() {   # wait up to 10 s for the record file to have $1 lines
     local -i i
     local -a lines
     for i in {1..100}; do
+      _drain
       [[ -r $T/post ]] && lines=(${(f)"$(<$T/post)"}) && (( ${#lines} >= $1 )) && return 0
       sleep 0.1
     done
     fail "no answer from the shell (step $1)"
   }
-  _k() { zpty -n -w sg "$1"; [[ $1 == *$'\x18t' ]] && _await $(( ++n )) }
+  _k() { _drain; zpty -n -w sg "$1"; [[ $1 == *$'\x18t' ]] && _await $(( ++n )) }
   zpty sg "HOME=$HOME XDG_DATA_HOME=$XDG_DATA_HOME XDG_CACHE_HOME=$XDG_CACHE_HOME HISTFILE=$T/hist TERM=xterm zsh -f -i"
   zpty -w sg "PS1='> '; source $ROOT/axle.plugin.zsh; _axle_sg_ready=1; AXLE_SUGGEST_STRATEGY=(smart)"
   zpty -w sg "_axle_sg_learn \$EPOCHSECONDS 0 \$PWD '' 'echo alpha-one'; _axle_sg_learn \$EPOCHSECONDS 0 \$PWD '' 'echo alpha-two'"
   # (zle -R redraws first, as a person's pause between keys would: suggestions are made then.)
   zpty -w sg "_t() { zle -R; print -r -- \"[\${POSTDISPLAY//\$'\n'/|}]\" >> $T/post }; zle -N _t; bindkey '^Xt' _t"
   zpty -w sg ": > $T/post"            # ready: the shell has run everything above
-  local -i i; for i in {1..100}; do [[ -e $T/post ]] && break; sleep 0.1; done
+  local -i i; for i in {1..100}; do _drain; [[ -e $T/post ]] && break; sleep 0.1; done
+  [[ -e $T/post ]] || fail "the shell didn't start"
   _k $'echo al\x18t'                  # typed: only the ghost text
   _k $'\x0e\x18t'                     # Ctrl-N: the list opens
   _k $'p\x18t'                        # typing closes it

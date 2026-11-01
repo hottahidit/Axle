@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.5
+
+- Tests: the live suggestion-list test keeps reading the shell's output, which otherwise
+  fills macOS's small terminal buffer and stops the shell.
+
 ## 0.1.4
 
 - Tests: the live suggestion-list test waits for each step instead of fixed delays (it
