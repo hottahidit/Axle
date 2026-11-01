@@ -54,6 +54,8 @@ test_fix_suggestions() {
     'apt install htop|100|sudo apt install htop'
     'systemctl restart nginx|1|sudo systemctl restart nginx'
   )
+  # On a case-insensitive disk (macOS's default) readme.md *is* README.md: nothing to fix.
+  [[ -e $T/readme.md ]] && cases=(${cases:#cat readme.md*})
   local c
   for c in $cases; do
     local -a f=("${(@s:|:)c}")

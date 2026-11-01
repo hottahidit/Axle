@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.3
+
+- Tests: the `fix` test no longer expects a case correction on case-insensitive disks
+  (macOS), where `readme.md` already opens `README.md`.
+
 ## 0.2.2
 
 Three new modules, on by default and switchable in `axle configure`:
