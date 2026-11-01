@@ -279,15 +279,20 @@ zshexit_functions+=(_stop_services)
 # A free-ish port for this test run.
 free_port() { REPLY=$(( 20000 + ($$ * 7 + RANDOM) % 20000 )) }
 
-# Wait (up to 10 s) until a service's state file says <state>.
+# Wait (up to 20 s: a cold CI machine starts Python slowly) until a service's state file
+# says <state>. On failure, everything needed to see why.
 wait_state() {
-  local -i i; local s=''
-  for i in {1..100}; do
-    [[ -r $HOME/.local/state/axle/run/services/$1/state ]] && s=$(<$HOME/.local/state/axle/run/services/$1/state)
+  local -i i; local s='' d=$HOME/.local/state/axle/run/services/$1
+  for i in {1..200}; do
+    [[ -r $d/state ]] && s=$(<$d/state)
     [[ $s == $2 ]] && return 0
     sleep 0.1
   done
-  fail "$1 never became $2 (last: ${s:-none}; log: $(cat $HOME/.local/state/axle/run/services/$1/log 2>/dev/null | tail -5))"
+  local f info=''
+  for f in $d/*(N); do [[ ${f:t} == (log|cmd) ]] || info+=" ${f:t}=$(<$f)"; done
+  local w='' p=''
+  [[ -r $d/watcher ]] && w=$(<$d/watcher); [[ -r $d/pid ]] && p=$(<$d/pid)
+  fail "$1 never became $2 (last: ${s:-none};$info; procs: $(ps -o pid=,stat=,args= -p ${w:-1},${p:-1} 2>&1 | cut -c1-80 | tr '\n' ';'); log: $(tail -5 $d/log 2>/dev/null))"
 }
 
 # A small web project serving on a port of our choosing: python's http.server.
