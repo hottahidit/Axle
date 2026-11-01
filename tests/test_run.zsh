@@ -259,3 +259,178 @@ test_run_question_in_a_terminal() {
   zpty -w sh 'exit'; zpty -d sh 2>/dev/null
   return 0
 }
+
+# --- M2: background services ----------------------------------------------------------
+
+# Whatever a service test started is stopped when its shell exits, even after a failure.
+# Only in the test's own process: zpty forks it to start a terminal's shell, and that
+# copy exiting must not stop anything.
+zmodload zsh/system
+typeset -g _test_pid=$sysparams[pid]
+_stop_services() {
+  (( sysparams[pid] == _test_pid )) || return 0
+  local d p
+  for d in $HOME/.local/state/axle/run/services/*(N/); do
+    for p in $d/(watcher|pid)(N); do [[ $(<$p) == $$ ]] || kill -TERM $(<$p) 2>/dev/null; done
+  done
+}
+zshexit_functions+=(_stop_services)
+
+# A free-ish port for this test run.
+free_port() { REPLY=$(( 20000 + ($$ * 7 + RANDOM) % 20000 )) }
+
+# Wait (up to 10 s) until a service's state file says <state>.
+wait_state() {
+  local -i i; local s=''
+  for i in {1..100}; do
+    [[ -r $HOME/.local/state/axle/run/services/$1/state ]] && s=$(<$HOME/.local/state/axle/run/services/$1/state)
+    [[ $s == $2 ]] && return 0
+    sleep 0.1
+  done
+  fail "$1 never became $2 (last: ${s:-none}; log: $(cat $HOME/.local/state/axle/run/services/$1/log 2>/dev/null | tail -5))"
+}
+
+# A small web project serving on a port of our choosing: python's http.server.
+web_project() {
+  mkdir -p $T/web; print '<!doctype html>' > $T/web/index.html; : > $T/web/requirements.txt
+  local py; py=$(whence -p python3 || whence -p python) || return 1
+  typeset -ga _axle_run_cmd=($py -m http.server $1 --bind 127.0.0.1)
+  typeset -g _axle_run_kind=service _axle_run_port=$1
+}
+
+test_run_service_lifecycle() {
+  AXLE_MODULES=(run) load_tool
+  local REPLY port; free_port; port=$REPLY
+  web_project $port || return 0
+  local dir=$HOME/.local/state/axle/run/services/web drop=$HOME/.cache/axle/drops/run-web
+  _axle_run_start $T/web web
+  wait_state web up
+  local pid=$(<$dir/pid)
+  kill -0 $pid || fail "the service runs"
+  assert_contains "$(<$drop)" "icon=⚡" "a ⚡ drop"
+  assert_contains "$(<$drop)" "text=web :$port" "with its port"
+  assert_contains "$(<$drop)" $'\nlink=http://localhost:'$port "and a link"
+  assert_contains "$(<$drop)" $'\npid='"$(<$dir/watcher)"$'\n' "and the pid it lives with"
+  local out
+  out=$(cd $T/web && axle run ls)
+  assert_match "$out" "*web*up*$port*http://localhost:$port*" "ls shows it"
+  # In the prompt, with Benzene.
+  load_theme
+  _axle_seg_drops; plain "$REPLY"
+  assert_contains "$REPLY" "⚡ web :$port" "the tab in the prompt"
+  cd $T/web
+  out=$(axle run stop)
+  assert_contains "$out" "stopped web"
+  sleep 0.2
+  kill -0 $pid 2>/dev/null && fail "the process is gone"
+  [[ -e $dir || -e $drop ]] && fail "nothing left behind"
+  return 0
+}
+
+test_run_crash_turns_red() {
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/bad; : > $T/bad/requirements.txt
+  typeset -ga _axle_run_cmd=(sh -c 'echo "Traceback: boom" >&2; exit 3')
+  typeset -g _axle_run_kind=service _axle_run_port=''
+  _axle_run_start $T/bad bad
+  wait_state bad crashed
+  local drop=$HOME/.cache/axle/drops/run-bad
+  assert_contains "$(<$drop)" "level=alarm" "a red tab"
+  assert_contains "$(<$drop)" "exited (3)" "with the exit code"
+  local out
+  out=$(axle run ls)
+  assert_match "$out" "*bad*exit 3*" "ls shows the crash"
+  out=$(axle run logs bad)
+  assert_contains "$out" "Traceback: boom" "logs show its output"
+  [[ -e $drop ]] && fail "looking at the logs clears the red tab"
+  axle run stop bad >/dev/null
+  [[ -e $HOME/.local/state/axle/run/services/bad ]] && fail "stop clears a crashed one"
+  return 0
+}
+
+test_run_stop_all_leaves_nothing() {
+  AXLE_MODULES=(run) load_tool
+  local REPLY p1 p2; free_port; p1=$REPLY; p2=$(( p1 + 1 ))
+  web_project $p1 || return 0
+  _axle_run_start $T/web one
+  web_project $p2
+  _axle_run_start $T/web two
+  wait_state one up; wait_state two up
+  local -a pids=($(<$HOME/.local/state/axle/run/services/one/pid) $(<$HOME/.local/state/axle/run/services/two/pid)
+                 $(<$HOME/.local/state/axle/run/services/one/watcher) $(<$HOME/.local/state/axle/run/services/two/watcher))
+  local out=$(axle run stop all)
+  assert_contains "$out" "stopped one"
+  assert_contains "$out" "stopped two"
+  sleep 0.3
+  local p
+  for p in $pids; do kill -0 $p 2>/dev/null && fail "process $p still running"; done
+  local -a left=($HOME/.local/state/axle/run/services/*(N) $HOME/.cache/axle/drops/run-*(N))
+  (( ${#left} )) && fail "files left behind: $left"
+  assert_eq "$(axle run ls)" "nothing running"
+}
+
+test_run_restart_and_env_file() {
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/envp; : > $T/envp/requirements.txt
+  print -l '# settings' 'export GREETING="hello there"' 'TOKEN=abc # comment' 'BAD LINE' 'EVIL=$(touch '$T'/pwned)' > $T/envp/.env
+  local -a reply
+  _axle_run_envfile $T/envp/.env
+  assert_eq "${(j:|:)reply}" "GREETING=hello there|TOKEN=abc|EVIL=\$(touch $T/pwned)" ".env read as data"
+  typeset -ga _axle_run_cmd=(sh -c 'echo "$GREETING/$TOKEN/$EVIL" > out.txt; exec sleep 30')
+  typeset -g _axle_run_kind=service _axle_run_port=''
+  _axle_run_start $T/envp envp
+  local -i i; for i in {1..50}; do [[ -s $T/envp/out.txt ]] && break; sleep 0.1; done
+  assert_eq "$(<$T/envp/out.txt)" "hello there/abc/\$(touch $T/pwned)" "the values reach the service, as text"
+  [[ -e $T/pwned ]] && fail "nothing in .env runs"
+  local pid1=$(<$HOME/.local/state/axle/run/services/envp/pid)
+  rm $T/envp/out.txt
+  axle run restart envp >/dev/null
+  for i in {1..50}; do [[ -s $T/envp/out.txt ]] && break; sleep 0.1; done
+  local pid2=$(<$HOME/.local/state/axle/run/services/envp/pid)
+  [[ $pid1 != $pid2 ]] || fail "restart starts a new process"
+  kill -0 $pid1 2>/dev/null && fail "and stops the old one"
+  axle run stop all >/dev/null
+  return 0
+}
+
+test_run_pid_reuse_is_not_ours() {
+  AXLE_MODULES=(run) load_tool
+  local dir=$HOME/.local/state/axle/run/services/ghost
+  mkdir -p $dir
+  print $$ > $dir/pid; print 'not-the-start-time' > $dir/pstart; print crashed-not > $dir/state
+  _axle_run_alive $dir && fail "a live pid with another start time isn't our service"
+  local -a reply; _axle_run_services
+  (( ${reply[(Ie)ghost]} )) && fail "and a dead service is cleaned up"
+  return 0
+}
+
+# From a real terminal: `axle run --bg` starts it, the port comes from what it prints,
+# and closing the terminal leaves it running (decided); `stop` ends it.
+test_run_service_survives_closing_the_terminal() {
+  zmodload zsh/zpty 2>/dev/null || return 0
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  AXLE_MODULES=(run) load_tool
+  local REPLY port; free_port; port=$REPLY
+  mkdir -p $T/srv
+  print -l "import http.server, socketserver" \
+    "s = socketserver.TCPServer(('127.0.0.1', $port), http.server.SimpleHTTPRequestHandler)" \
+    "print('Serving at http://localhost:$port/', flush=True)" "s.serve_forever()" > $T/srv/main.py
+  : > $T/srv/requirements.txt
+  zpty sh "HOME=$HOME XDG_CONFIG_HOME=$XDG_CONFIG_HOME XDG_CACHE_HOME=$XDG_CACHE_HOME XDG_DATA_HOME=$XDG_DATA_HOME HISTFILE=$T/hist TERM=xterm AXLE_UPDATE_CHECK=0 zsh -f -i"
+  zpty -w sh "PS1='> '; AXLE_MODULES=(run); source $ROOT/axle.plugin.zsh; cd $T/srv; axle run --yes --bg; : > $T/started"
+  local -i i; local c
+  for i in {1..150}; do while zpty -rt sh c 2>/dev/null; do :; done; [[ -e $T/started ]] && break; sleep 0.1; done
+  [[ -e $T/started ]] || fail "axle run --bg didn't return"
+  wait_state srv up
+  local dir=$HOME/.local/state/axle/run/services/srv pid
+  pid=$(<$dir/pid)
+  assert_eq "$(<$dir/port)" $port "the port it printed"
+  zpty -d sh 2>/dev/null                         # close the terminal
+  sleep 1
+  kill -0 $pid 2>/dev/null || fail "the service keeps running after the terminal closes"
+  _axle_run_port_up $port || fail "and still answers"
+  cd $T/srv; axle run stop >/dev/null
+  sleep 0.2
+  kill -0 $pid 2>/dev/null && fail "stop ends it"
+  return 0
+}

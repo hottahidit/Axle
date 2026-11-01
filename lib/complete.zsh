@@ -80,8 +80,18 @@ _axle_complete() {
       (( CURRENT == 3 )) && _values option '--yes[links and cache, no questions]' \
         '--purge[also settings and history, no questions]' ;;
     run)
-      if [[ $PREFIX == -* ]]; then
-        _values option '--dry-run[say what would run, and why]' '--yes[run without asking]'
+      local -a svcs=(${XDG_STATE_HOME:-$HOME/.local/state}/axle/run/services/*(N/:t))
+      if (( CURRENT == 3 )) && [[ $PREFIX != -* ]]; then
+        _values action 'ls[what is running]' 'stop[stop a service]' 'restart[restart a service]' \
+          'logs[a service'"'"'s output]' 'open[open its URL]'
+        (( $+functions[_axle_jump_complete] )) && { shift words; (( CURRENT-- )); _axle_jump_complete }
+      elif [[ $words[3] == (stop|restart|logs|open) ]]; then
+        [[ $words[3] == stop ]] && svcs+=(all)
+        [[ $words[3] == logs ]] && compadd -- -f
+        compadd -a svcs
+      elif [[ $PREFIX == -* ]]; then
+        _values option '--dry-run[say what would run, and why]' '--yes[run without asking]' \
+          '--fg[in the foreground]' '--bg[in the background]'
       elif (( $+functions[_axle_jump_complete] )); then
         shift words; (( CURRENT-- ))
         _axle_jump_complete

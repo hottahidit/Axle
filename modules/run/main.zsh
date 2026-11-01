@@ -182,12 +182,21 @@ _axle_run_exec() {
 }
 
 _axle_cmd_run() {
-  local dry=0 yes=0
+  case $1 in
+    ls|list)  shift; _axle_run_ls "$@"; return ;;
+    stop)     shift; _axle_run_stop "$@"; return ;;
+    restart)  shift; _axle_run_restart "$@"; return ;;
+    logs|log) shift; _axle_run_logs "$@"; return ;;
+    open)     shift; _axle_run_open "$@"; return ;;
+  esac
+  local dry=0 yes=0 mode=''
   local -a words=()
   while (( $# )); do
     case $1 in
       -n|--dry-run) dry=1 ;;
       -y|--yes)     yes=1 ;;
+      --fg)         mode=fg ;;
+      --bg)         mode=bg ;;
       --) shift; words+=("$@"); break ;;
       -*) print -u2 -r -- "axle run: unknown option '$1' (axle help run)"; return 1 ;;
       *)  words+=("$1") ;;
@@ -211,10 +220,12 @@ _axle_cmd_run() {
       print -r -- "  run    $show"
       print -r -- "  how    $_axle_run_what ($_axle_run_reason)"
       if [[ $_axle_run_kind == service ]]; then
-        print -r -- "  kind   service${_axle_run_port:+ on http://localhost:$_axle_run_port}"
+        print -r -- "  kind   service${_axle_run_port:+ on http://localhost:$_axle_run_port} (runs in the background)"
       else
         print -r -- "  kind   task (runs in the foreground)"
       fi
+      _axle_run_name $root
+      _axle_run_alive $_axle_run_dir/services/$REPLY && print -r -- "  now    running as $REPLY (axle run ls)"
       _axle_run_trust_key $root
       _axle_run_trusted $REPLY || print -r -- "  trust  not run before: axle run asks first"
     else
@@ -236,6 +247,12 @@ _axle_cmd_run() {
     return 1
   fi
 
+  # Already running: say so (with what you can do) rather than asking again.
+  if [[ $_axle_run_kind == service && $mode != fg ]]; then
+    _axle_run_name $root
+    _axle_run_alive $_axle_run_dir/services/$REPLY && { _axle_run_bg $root $REPLY; return }
+  fi
+
   _axle_run_trust_key $root
   local key=$REPLY trusted=0
   _axle_run_trusted $key && trusted=1
@@ -248,8 +265,15 @@ _axle_cmd_run() {
   fi
   (( trusted )) || _axle_run_trust $key
 
-  if [[ $_axle_run_kind == service ]]; then
-    _axle_printp "%F{${_axle_c[ok]:-green}}⚡%f %B${name//\%/%%}%b${_axle_run_port:+ on http://localhost:$_axle_run_port} %F{$muted}(in the foreground for now: Ctrl-C stops it)%f"
+  local bg=0
+  [[ $_axle_run_kind == service ]] && bg=1
+  [[ $mode == fg ]] && bg=0
+  [[ $mode == bg ]] && bg=1
+  if (( bg )); then
+    _axle_run_name $root
+    _axle_printp "%F{$muted}▶ ${show//\%/%%}%f"
+    _axle_run_bg $root $REPLY
+    return
   fi
   _axle_printp "%F{$muted}▶ ${show//\%/%%}%f"
   _axle_run_exec $root

@@ -14,7 +14,15 @@
     Streamlit, Gradio, Dash, a single `[project.scripts]` entry, `main.py`, Rust (axum,
     actix-web, Rocket, warp as servers), Go (gin, echo, fiber, chi, `ListenAndServe`), and
     a lone `index.html`. Ports from the code when written there.
-  - Runs in the foreground, in the project's root and its venv (never `activate`).
+  - Scripts and CLIs run in the foreground, in the project's root and its venv (never
+    `activate`).
+  - Servers run in the background, supervised (no daemon): their output goes to a log,
+    `.env` is read as data (never sourced) and given to the process, and the prompt shows
+    a tab: `⏳ name` while starting, `⚡ name :port` once the port answers (Ctrl+click
+    opens it; the port a dev server prints, if it picked another), red if it exits with
+    an error. They keep running when the terminal closes.
+  - `axle run ls` (state, port, uptime, memory, URL), `stop [name|all]`, `restart`,
+    `logs [-f]` (which also clears a red tab) and `open`; `--fg` / `--bg` to choose.
   - Asks before a project's command runs the first time, and remembers per project and
     command; a changed package.json script asks again. `--yes` skips the question.
   - `axle run --dry-run` says which project, why, what would run and how.

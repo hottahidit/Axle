@@ -156,8 +156,9 @@ Each milestone ends with its tests passing (Linux + macOS CI) and is usable on i
 - **Done when:** in each sample project under `tests/fixtures/run/` the right command is chosen,
   and `axle run` from `~` returns to the last project.
 
-### M2 · Background services
-- Services start detached (`setsid`), output to a log, pid + start time recorded (no PID-reuse
+### M2 · Background services ✔
+- Services start detached (a supervisor per service: a fresh `zsh -f` that ignores SIGHUP;
+  no `setsid`, which macOS lacks), output to a log, pid + start time recorded (no PID-reuse
   mistakes), `.env` loaded as data, venv on PATH.
 - In the prompt: a drop `⚡ name :port` (link to the URL), `⏳` while starting, red if it exits
   with an error.
@@ -248,8 +249,7 @@ axle run top                   live monitor
 
 ## Open questions
 
-1. **Name in the prompt:** `⚡ shop-api :8000`, or Legionary's ⚔ as the icon?
-2. **The Legionary repository:** archive it with a pointer here once merged?
+1. **The Legionary repository:** archive it with a pointer here once merged?
 
-Decided: background services **keep running** when the terminal closes (`axle run stop` ends
+Decided: the prompt shows `⚡ shop-api :8000` (not ⚔). Background services **keep running** when the terminal closes (`axle run stop` ends
 them; `AXLE_RUN_ON_EXIT=stop` for those who prefer otherwise).
