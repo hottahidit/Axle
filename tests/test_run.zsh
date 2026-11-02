@@ -288,11 +288,15 @@ wait_state() {
     [[ $s == $2 ]] && return 0
     sleep 0.1
   done
-  local f info=''
-  for f in $d/*(N); do [[ ${f:t} == (log|cmd) ]] || info+=" ${f:t}=$(<$f)"; done
-  local w='' p=''
+  # The annotation CI shows is cut at 1500 characters: what matters most goes first.
+  local w='' p='' tr=''
   [[ -r $d/watcher ]] && w=$(<$d/watcher); [[ -r $d/pid ]] && p=$(<$d/pid)
-  fail "$1 never became $2 (last: ${s:-none};$info; procs: $(ps -o pid=,stat=,args= -p ${w:-1},${p:-1} 2>&1 | cut -c1-80 | tr '\n' ';'); log: $(tail -5 $d/log 2>/dev/null); trace: $(tail -25 $d/trace 2>/dev/null | cut -c1-140))"
+  [[ -r $d/trace ]] && tr=$(tail -14 $d/trace | sed -E 's|/[^ ]*/(services\|work)/|…/|g' | cut -c1-80)
+  fail "$1 never became $2 (last: ${s:-none})
+children of the supervisor: $(ps -A -o ppid=,pid=,stat=,etime=,comm= | awk -v w="${w:-1}" '$1 == w { print $2, $3, $4, $5 }' | sed 's|/[^ ]*/||' | tr '\n' ';')
+trace end:
+$tr
+log: $(tail -3 $d/log 2>/dev/null | cut -c1-80)"
 }
 
 # A small web project serving on a port of our choosing: python's http.server.
