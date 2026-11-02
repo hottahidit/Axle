@@ -37,6 +37,9 @@ _axle_run_pstart() {
   [[ -n $REPLY ]]
 }
 
+# A file of NUL-separated words (reply). (`read -d ''` would stop at the first one.)
+_axle_run_words() { reply=("${(@0)mapfile[$1]}") }
+
 # Is the service in <dir> still the process we started?
 _axle_run_alive() {
   local REPLY pid
@@ -147,7 +150,7 @@ _axle_run_drop() {
   case $2 in
     starting) body="text=$name${nl}icon=⏳${nl}level=info${nl}pid=$5" ;;
     up)       body="text=$name${3:+ :$3}${nl}icon=⚡${nl}level=ok${nl}pid=$5${4:+${nl}link=$4}" ;;
-    crashed)  body="text=$name exited ($6) · axle run logs${nl}icon=⚡${nl}level=alarm" ;;
+    crashed)  body="text=$name exited ($6) · axle run logs${nl}icon=✘${nl}level=alarm" ;;
   esac
   print -r -- "$body" >| $file.$$ && command mv -f -- $file.$$ $file
 }
@@ -364,7 +367,7 @@ _axle_run_bg() {
   for i in {1..40}; do
     _axle_run_get $dir state; state=$REPLY
     [[ $state == (up|crashed) || ! -d $dir ]] && break
-    zselect -t 25 || break
+    zselect -t 25                                  # (its status is 1 on a plain timeout)
   done
   case $state in
     up)
@@ -406,7 +409,7 @@ _axle_run_ls() {
     _axle_run_get $dir port;  port=${REPLY:--}
     _axle_run_get $dir url;   url=$REPLY
     _axle_run_get $dir started
-    _axle_fmt_duration $(( EPOCHSECONDS - ${REPLY:-$EPOCHSECONDS} )); up=${REPLY%.??s}
+    _axle_fmt_duration $(( EPOCHSECONDS - ${REPLY:-$EPOCHSECONDS} )); up=${REPLY/.??s/s}
     mem=-
     _axle_run_get $dir kind
     if [[ $REPLY == compose ]]; then
@@ -426,9 +429,9 @@ _axle_run_ls() {
 _axle_run_compose() {
   local dir=$1 REPLY; shift
   _axle_run_get $dir root
-  local root=$REPLY cmd
-  IFS= read -rd '' cmd < $dir/cmd
-  local -a words=("${(@0)cmd}")                    # docker compose -f <file> up -d
+  local root=$REPLY
+  local -a reply words
+  _axle_run_words $dir/cmd; words=($reply)         # docker compose -f <file> up -d
   ( cd -- $root && command "${(@)words[1,4]}" "$@" )
 }
 
@@ -492,11 +495,9 @@ _axle_run_restart() {
   _axle_run_get $dir port; port=$REPLY
   _axle_run_get $dir kind; kind=$REPLY
   [[ -r $dir/cmd ]] || { print -u2 "axle run: don't know how $name was started"; return 1 }
-  local cmd; IFS= read -rd '' cmd < $dir/cmd
-  local -a words=("${(@0)cmd}") extra=()
-  if [[ -r $dir/env ]]; then
-    local e; IFS= read -rd '' e < $dir/env; extra=("${(@0)e}")
-  fi
+  local -a reply words extra=()
+  _axle_run_words $dir/cmd; words=($reply)
+  [[ -r $dir/env ]] && { _axle_run_words $dir/env; extra=($reply) }
   _axle_run_stop_one $name
   typeset -ga _axle_run_cmd=($words) _axle_run_env=($extra)
   typeset -g _axle_run_port=$port _axle_run_kind=${kind:-service}

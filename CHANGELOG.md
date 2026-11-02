@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.3.0 - Legionary (in progress, branch `legionary`)
+## 0.3.0 - axle run (in progress, branch `legionary`)
 
-`axle run`, from the Legionary project launcher (plan: `docs/legionary/ROADMAP.md`).
+`axle run`: run this project, or go back to the last one (plan: `docs/legionary/ROADMAP.md`).
 
 - New module **run** (off by default while in progress; `axle module on run`):
   - Which project: the one you name (`axle run shop`, ranked by where you work, like `j`),

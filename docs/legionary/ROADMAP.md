@@ -211,7 +211,8 @@ Each milestone ends with its tests passing (Linux + macOS CI) and is usable on i
 - Wizard: `run` offered (on by default), with its main settings.
 - Security review of everything that executes or reads repository files.
 - Startup cost unchanged (still ≈ 3 ms); all tests green on Linux and macOS.
-- `docs/legionary/` folded into the README; the Legionary repository's README points here.
+- `docs/legionary/` folded into the README, with a small tribute to the original idea. It ships as
+  `axle run`; the Legionary name appears nowhere else users see it.
 
 ---
 
@@ -251,11 +252,9 @@ axle run top                   live monitor
 - Commits on the branch are named **`(legionary)vX.Y.Z - Title`**, numbered by the branch's own
   progress, independent of `main`: `(legionary)v0.1.0 - branch creation` is the first. Each
   milestone is a snapshot (M1 → v0.2.0, M2 → v0.3.0, ...), fixes within one are hotfixes.
-- Merging is one release on `main`: **v0.3.0 - Legionary** (a new snapshot in `main`'s scheme).
+- Merging is one release on `main`: **v0.3.0 - axle run** (a new snapshot in `main`'s scheme).
 
-## Open questions
-
-1. **The Legionary repository:** archive it with a pointer here once merged?
+## Decisions
 
 Decided: the prompt shows `⚡ shop-api :8000` (not ⚔). Background services **keep running** when the terminal closes (`axle run stop` ends
 them; `AXLE_RUN_ON_EXIT=stop` for those who prefer otherwise).

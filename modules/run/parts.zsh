@@ -105,8 +105,11 @@ _axle_run_tmux() {
   local e
   _axle_run_envfile $dir/.env && for e in $reply; do envs+=(-e $e); done
   for e in $_axle_run_env; do envs+=(-e $e); done
-  command tmux new-session -d -s $name -c $dir $envs -- "${_axle_run_cmd[@]}" \; \
-    set-option -t "=$name" remain-on-exit on >/dev/null || {
+  # Through a small sh that holds the session open when the program ends, so its output
+  # stays readable (remain-on-exit loses it). The words are arguments, never re-parsed.
+  command tmux new-session -d -s $name -c $dir $envs -- sh -c \
+    '"$@"; st=$?; printf "\n[%s exited with code %s; Enter closes this session]\n" "$1" "$st"; read _' \
+    axle-run "${_axle_run_cmd[@]}" >/dev/null || {
       print -u2 -r -- "axle run: tmux couldn't start $name (tmux 3.2 or later is needed)"
       return 1
     }

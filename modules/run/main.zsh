@@ -177,6 +177,12 @@ _axle_run_exec() {
       path=($REPLY/bin ${path:#$REPLY/bin})
       unset PYTHONHOME
     fi
+    # The same environment a background service gets: .env (data), PORT, what axle run set.
+    local e
+    local -a reply
+    _axle_run_envfile $root/.env && for e in $reply; do export "$e"; done
+    [[ $_axle_run_kind == service && -n $_axle_run_port ]] && export PORT=$_axle_run_port
+    for e in $_axle_run_env; do export "$e"; done
     exec -- "${_axle_run_cmd[@]}"
   )
 }
@@ -411,6 +417,7 @@ _axle_cmd_run() {
     _axle_run_partname $root $fg; svc=$REPLY
     _axle_run_detect $dir || return 1
     _axle_run_approve $dir $svc $yes || return 1
+    [[ $_axle_run_kind == service ]] && { _axle_run_resolve_port $dir $svc || return 1 }
     _axle_run_say_cmd $dir
     _axle_run_exec $dir
     return

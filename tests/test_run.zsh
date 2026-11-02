@@ -269,6 +269,7 @@ zmodload zsh/system
 typeset -g _test_pid=$sysparams[pid]
 _stop_services() {
   (( sysparams[pid] == _test_pid )) || return 0
+  [[ -n $TMUX_TMPDIR ]] && whence -p tmux >/dev/null && command tmux kill-server 2>/dev/null
   local d p
   for d in $HOME/.local/state/axle/run/services/*(N/); do
     for p in $d/(watcher|pid)(N); do [[ $(<$p) == $$ ]] || kill -TERM $(<$p) 2>/dev/null; done
@@ -293,6 +294,7 @@ wait_state() {
   [[ -r $d/watcher ]] && w=$(<$d/watcher); [[ -r $d/pid ]] && p=$(<$d/pid)
   [[ -r $d/trace ]] && tr=$(tail -14 $d/trace | sed -E 's|/[^ ]*/(services\|work)/|…/|g' | cut -c1-80)
   fail "$1 never became $2 (last: ${s:-none})
+service: $(lsof -nP -a -p ${p:-1} -iTCP 2>/dev/null | tail -n +2 | awk '{print $8, $9, $10}' | tr '\n' ';') stack: $(command -v sample >/dev/null && sample ${p:-1} 1 -mayDie 2>/dev/null | grep -oE 'getaddrinfo|getnameinfo|gethostby[a-z_]*|getfqdn|poll|select|accept|__recvfrom' | sort -u | tr '\n' ' ')
 children of the supervisor: $(ps -A -o ppid=,pid=,stat=,etime=,comm= | awk -v w="${w:-1}" '$1 == w { print $2, $3, $4, $5 }' | sed 's|/[^ ]*/||' | tr '\n' ';')
 trace end:
 $tr
@@ -346,6 +348,7 @@ test_run_crash_turns_red() {
   local drop=$HOME/.cache/axle/drops/run-bad
   assert_contains "$(<$drop)" "level=alarm" "a red tab"
   assert_contains "$(<$drop)" "exited (3)" "with the exit code"
+  assert_contains "$(<$drop)" "icon=✘" "and not the ⚡ of a running one"
   local out
   out=$(axle run ls)
   assert_match "$out" "*bad*exit 3*" "ls shows the crash"
@@ -397,6 +400,7 @@ test_run_restart_and_env_file() {
   for i in {1..50}; do [[ -s $T/envp/out.txt ]] && break; sleep 0.1; done
   local pid2=$(<$HOME/.local/state/axle/run/services/envp/pid)
   [[ $pid1 != $pid2 ]] || fail "restart starts a new process"
+  assert_eq "$(<$T/envp/out.txt)" "hello there/abc/\$(touch $T/pwned)" "the same command, with all its words, and .env"
   kill -0 $pid1 2>/dev/null && fail "and stops the old one"
   axle run stop all >/dev/null
   return 0
@@ -710,7 +714,7 @@ test_run_verbose_with_tmux() {
   assert_contains "$out" "tmux sessions: shop-one, shop-two"
   local log=$(<$T/tmux.log)
   assert_contains "$log" "new-session|-d|-s|shop-one|-c|$T/shop/one|-e|PORT=$P1|--|" "a session per part, in its folder, with its port"
-  assert_contains "$log" "-m|http.server|$P1|;|set-option|-t|=shop-one|remain-on-exit|on|" "the command as words; kept open after it ends"
+  assert_contains "$log" "|axle-run|python3|-m|http.server|$P1|" "the command as words, kept open after it ends"
   assert_contains "$log" "new-session|-d|-s|shop-two|" "the second"
   local -a left=($HOME/.local/state/axle/run/services/*(N))
   (( ${#left} )) && fail "--only: nothing in the background: $left"
@@ -722,7 +726,8 @@ test_run_config_asks_again() {
   AXLE_MODULES=(run) load_tool
   parts_project
   _axle_run_choice_save $T/shop one two
-  print -l "AXLE_MODULES=(run); source $ROOT/axle.plugin.zsh" "cd $T/shop" > $T/setup.zsh
+  print -l "AXLE_MODULES=(run); source $ROOT/axle.plugin.zsh" "cd $T/shop" \
+    "_axle_run_partname x y" "_axle_run_have_tmux() { return 1 }" > $T/setup.zsh
   zpty sh "HOME=$HOME XDG_CONFIG_HOME=$XDG_CONFIG_HOME XDG_CACHE_HOME=$XDG_CACHE_HOME XDG_DATA_HOME=$XDG_DATA_HOME HISTFILE=$T/hist TERM=xterm AXLE_UPDATE_CHECK=0 zsh -f -i"
   zpty -w sh "PS1='> '; source $T/setup.zsh; : > $T/ready"
   _wait() { local -i i; local c; for i in {1..150}; do while zpty -rt sh c 2>/dev/null; do :; done; [[ -e $1 ]] && return 0; sleep 0.1; done; fail "no answer ($1)" }
@@ -735,4 +740,62 @@ test_run_config_asks_again() {
   zpty -w sh 'exit'; zpty -d sh 2>/dev/null
   local -a reply; _axle_run_choice_load $T/shop
   assert_eq "${(j: :)reply}" "cli two" "--config: chosen again, and saved"
+}
+
+# What you actually read: `axle run` waits for the server and says where it is, and `ls`
+# gives the uptime with its unit.
+test_run_says_when_the_server_is_up() {
+  AXLE_MODULES=(run) load_tool
+  whence -p python3 >/dev/null || return 0
+  local REPLY port; free_port; port=$REPLY
+  mkdir -p $T/site; print '<!doctype html>' > $T/site/index.html
+  _axle_run_detect $T/site >/dev/null 2>&1
+  functions[_axle_run_detect_orig]=$functions[_axle_run_detect]
+  _axle_run_detect() { _axle_run_detect_orig "$@" || return 1; _axle_run_cmd[-1]=$port; _axle_run_port=$port }
+  cd $T/site
+  local out=$(axle run --yes </dev/null 2>&1)
+  assert_contains "$out" "site" "names it"
+  assert_contains "$out" "running on http://localhost:$port" "and waits until it's up"
+  assert_match "$(axle run ls)" "*up*$port*[0-9]s *" "uptime with its unit"
+  axle run stop >/dev/null
+}
+
+# The real tmux, on the test's own server (TMUX_TMPDIR): the session runs the part in its
+# folder with its environment, and stays open with the output after the program ends.
+test_run_verbose_with_real_tmux() {
+  AXLE_MODULES=(run) load_tool
+  whence -p tmux >/dev/null || return 0
+  [[ $(command tmux -V) == (#b)*\ ([0-9]##).([0-9]##)* ]] && (( match[1] > 3 || (match[1] == 3 && match[2] >= 2) )) || return 0
+  mkdir -p $T/mono/a $T/mono/b
+  print '{"workspaces": ["a", "b"]}' > $T/mono/package.json
+  print -l 'web: echo "from a in $(basename "$PWD") GREET=$GREET"; exit 3' > $T/mono/a/Procfile
+  print 'GREET=hello' > $T/mono/a/.env
+  print -l 'web: exit 0' > $T/mono/b/Procfile
+  cd $T/mono
+  local out; local -i rc=0
+  out=$(axle run --yes --verbose mono-a --only </dev/null 2>&1) || rc=$?
+  (( rc == 0 )) || fail "started: $out"
+  assert_contains "$out" "tmux sessions: mono-a"
+  command tmux has-session -t '=mono-a' || fail "the session exists"
+  local -i i; local pane=''
+  for i in {1..50}; do
+    pane=$(command tmux capture-pane -p -t '=mono-a:')
+    [[ $pane == *"exited with code"* ]] && break
+    sleep 0.1
+  done
+  command tmux kill-server 2>/dev/null
+  assert_contains "$pane" "from a in a GREET=hello" "its folder and .env, still readable after it ended"
+  assert_contains "$pane" "exited with code 3" "and how it ended"
+}
+
+# In the foreground a project gets the same environment as in the background.
+test_run_foreground_gets_env_file_and_port() {
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/fg
+  print 'GREET=hello' > $T/fg/.env
+  print 'web: echo "GREET=$GREET PORT=$PORT"' > $T/fg/Procfile
+  cd $T/fg
+  local out=$(axle run --yes --fg </dev/null 2>&1)
+  assert_contains "$out" "GREET=hello PORT=" ".env in the foreground"
+  [[ $out == *"PORT=5"* ]] || [[ $out == *"PORT="[0-9]* ]] || fail "and its port: $out"
 }
