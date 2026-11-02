@@ -50,8 +50,8 @@ _axle_run_alive() {
 
 # Does something answer on this port? IPv4 by connecting (zsh's ztcp: no subprocess);
 # IPv6 (a server on ::1 or :: only, like Vite under recent Node) by looking for a
-# listener: /proc/net/tcp6 on Linux (no subprocess), nc or lsof elsewhere. (ztcp can't
-# do IPv6.)
+# listener: /proc/net/tcp6 on Linux (no subprocess), nc (macOS) or lsof elsewhere.
+# (ztcp can't do IPv6.)
 _axle_run_port_up() {
   local port=$1 fd line hex
   if ztcp 127.0.0.1 $port 2>/dev/null; then
@@ -67,8 +67,10 @@ _axle_run_port_up() {
     return 1
   fi
   [[ -d /proc/net ]] && return 1                   # Linux without IPv6
-  if whence -p nc >/dev/null; then
-    command nc -z -w 1 ::1 $port >/dev/null 2>&1
+  if [[ $OSTYPE == darwin* ]] && whence -p nc >/dev/null; then
+    # -G: a 1 s limit on connecting (-w alone doesn't bound it, and a dropped connection
+    # would block for the system's ~75 s TCP timeout).
+    command nc -z -G 1 -w 1 ::1 $port >/dev/null 2>&1
   elif whence -p lsof >/dev/null; then
     [[ -n $(command lsof -nP -iTCP:$port -sTCP:LISTEN -t 2>/dev/null) ]]
   else
