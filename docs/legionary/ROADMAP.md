@@ -113,7 +113,7 @@ First match wins; each gives a command, whether it's a **service** (background) 
 
 The port is read from, in order: what's already set (`--port`, `PORT` in `.env`), the code or
 config (`app.run(port=…)`, `vite.config`, `server.port`), the framework default. A service counts
-as "up" when its port answers; until then the prompt shows `⏳ shop-api`.
+as "up" when something listens on its port; until then the prompt shows `⏳ shop-api`.
 
 ---
 
@@ -168,7 +168,8 @@ Each milestone ends with its tests passing (Linux + macOS CI) and is usable on i
   turns the tab red; nothing left behind after `stop all`.
 
 ### M3 · Ports ✔
-- Port detection (code, config, `.env`, defaults); "up" check by connecting.
+- Port detection (code, config, `.env`, defaults); "up" check by looking for a listener
+  (`/proc/net/tcp*` on Linux, `lsof` / `nc` elsewhere, bounded), never a blocking connect.
 - Who holds a port: `/proc/net/tcp` on Linux (no subprocess), `lsof` on macOS.
 - Conflict: one of yours → restart it; someone else's → stop it (asks) / next free port / cancel.
 - **Done when:** two projects on the same default port both run, the second on the next port.

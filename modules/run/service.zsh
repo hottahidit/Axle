@@ -12,7 +12,7 @@
 # (epoch), state (starting | up | crashed), code (exit code), and log (its output).
 # Drops are ~/.cache/axle/drops/run-<name>.
 
-zmodload zsh/system zsh/zselect zsh/net/tcp zsh/mapfile zsh/datetime zsh/parameter 2>/dev/null
+zmodload zsh/system zsh/zselect zsh/mapfile zsh/datetime zsh/parameter 2>/dev/null
 zmodload -F zsh/stat b:zstat 2>/dev/null
 
 typeset -g _axle_run_dir=${_axle_run_dir:-${XDG_STATE_HOME:-$HOME/.local/state}/axle/run}
@@ -49,32 +49,28 @@ _axle_run_alive() {
   _axle_run_pstart $pid && [[ $REPLY == $want ]]
 }
 
-# Does something answer on this port? IPv4 by connecting (zsh's ztcp: no subprocess);
-# IPv6 (a server on ::1 or :: only, like Vite under recent Node) by looking for a
-# listener: /proc/net/tcp6 on Linux (no subprocess), else lsof (asks the system, no
-# network) or, failing that, nc. (ztcp can't do IPv6.) Those tools get 2 s at most.
+# Is something listening on this port, IPv4 or IPv6? Never by connecting from this shell:
+# zsh's ztcp can block for good (it did on macOS, stalling the supervisor), and it has no
+# IPv6. Linux: /proc/net/tcp and tcp6 (no subprocess). Elsewhere: lsof, which only sees
+# your own processes, then nc for anyone else's; each gets 2 s at most.
 _axle_run_port_up() {
-  local port=$1 fd line hex
-  if ztcp 127.0.0.1 $port 2>/dev/null; then
-    fd=$REPLY; ztcp -c $fd 2>/dev/null
-    return 0
-  fi
-  if [[ -r /proc/net/tcp6 ]]; then
+  local port=$1 f line hex
+  if [[ -r /proc/net/tcp ]]; then
     printf -v hex '%04X' $port
-    while IFS= read -r line; do
-      local -a w=(${=line})
-      [[ ${w[2]##*:} == $hex && $w[4] == 0A ]] && return 0
-    done < /proc/net/tcp6
+    for f in /proc/net/tcp /proc/net/tcp6; do
+      [[ -r $f ]] || continue
+      while IFS= read -r line; do
+        local -a w=(${=line})
+        [[ ${w[2]##*:} == $hex && $w[4] == 0A ]] && return 0
+      done < $f
+    done
     return 1
   fi
-  [[ -d /proc/net ]] && return 1                   # Linux without IPv6
-  if whence -p lsof >/dev/null; then
-    _axle_run_bounded command lsof -nP -iTCP:$port -sTCP:LISTEN -t
-  elif whence -p nc >/dev/null; then
-    _axle_run_bounded command nc -z -w 1 ::1 $port
-  else
-    return 1
-  fi
+  whence -p lsof >/dev/null &&
+    _axle_run_bounded command lsof -nP -iTCP:$port -sTCP:LISTEN -t && return 0
+  whence -p nc >/dev/null &&
+    _axle_run_bounded command nc -z -w 1 127.0.0.1 $port && return 0
+  return 1
 }
 
 # Run a command for at most 2 s (its status; 1 if it took longer, and it's ended).
