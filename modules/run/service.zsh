@@ -40,6 +40,7 @@ _axle_run_pstart() {
 # Is the service in <dir> still the process we started?
 _axle_run_alive() {
   local REPLY pid
+  _axle_run_get $1 kind && [[ $REPLY == compose ]] && return 0   # docker runs those
   _axle_run_get $1 pid || return 1
   pid=$REPLY
   kill -0 $pid 2>/dev/null || return 1
@@ -147,10 +148,10 @@ _axle_run_drop() {
 
 # --- names ----------------------------------------------------------------------------
 
-# The service name for a project root (REPLY): its folder name, made safe; another
-# project already using it gets -2, -3, ...
+# The service name for a project (part) folder (REPLY): <base> (default: its folder name),
+# made safe; another folder already using it gets -2, -3, ...
 _axle_run_name() {
-  local root=$1 base=${${1:t}//[^A-Za-z0-9._-]/-} name REPLY2
+  local root=$1 base=${${2:-${1:t}}//[^A-Za-z0-9._-]/-} name
   [[ $base == .* || -z $base ]] && base=project${base}
   local -i n=1
   name=$base
@@ -313,6 +314,31 @@ _axle_run_supervise() {
 
 # --- the commands -----------------------------------------------------------------------
 
+# A failed service's whole log, indented, between rules (it's the evidence).
+_axle_run_show_log() {
+  local muted=${_axle_c[muted]:-244} line
+  _axle_printp "%F{$muted}  ┌─ ${${1/#$HOME/~}//\%/%%}%f"
+  if [[ -s $1 ]]; then
+    while IFS= read -r line || [[ -n $line ]]; do print -r -- "  │ $line"; done < $1
+  else
+    _axle_printp "  │ %F{$muted}(no output)%f"
+  fi
+  _axle_printp "%F{$muted}  └─%f"
+}
+
+# The services of the project you're in (reply): started from here, above or below.
+_axle_run_mine() {
+  local -a all mine=()
+  local s REPLY here=${PWD:a}
+  _axle_run_services; all=($reply)
+  for s in $all; do
+    _axle_run_get $_axle_run_dir/services/$s root
+    [[ $here == $REPLY || $here == $REPLY/* || $REPLY == $here/* ]] && mine+=($s)
+  done
+  reply=($mine)
+  (( ${#reply} ))
+}
+
 # Start the detected service from `axle run`, then wait a moment to say how it went.
 _axle_run_bg() {
   local root=$1 name=$2 REPLY
@@ -338,8 +364,8 @@ _axle_run_bg() {
       _axle_printp "%F{$ok}⚡%f %B${name//\%/%%}%b running on ${REPLY//\%/%%}  %F{$muted}(background · axle run logs · stop)%f" ;;
     crashed)
       _axle_run_get $dir code
-      _axle_printp "%F{$err}✘%f %B${name//\%/%%}%b exited (code $REPLY). Its last lines:"
-      command tail -n 15 -- $dir/log 2>/dev/null | sed 's/^/  /'
+      _axle_printp "%F{$err}✘%f %B${name//\%/%%}%b exited (code $REPLY). Its log:"
+      _axle_run_show_log $dir/log
       return 1 ;;
     *)
       if [[ ! -d $dir ]]; then
@@ -374,7 +400,10 @@ _axle_run_ls() {
     _axle_run_get $dir started
     _axle_fmt_duration $(( EPOCHSECONDS - ${REPLY:-$EPOCHSECONDS} )); up=${REPLY%.??s}
     mem=-
-    if [[ $state == crashed ]]; then
+    _axle_run_get $dir kind
+    if [[ $REPLY == compose ]]; then
+      state=compose
+    elif [[ $state == crashed ]]; then
       _axle_run_get $dir code; state="exit $REPLY"; up=-
     elif _axle_run_get $dir pid; then
       local -a tree=($REPLY); local -i i=1 kb=0
@@ -385,10 +414,25 @@ _axle_run_ls() {
   done
 }
 
+# Run `docker compose -f <file> <args>` for a compose service, in its folder.
+_axle_run_compose() {
+  local dir=$1 REPLY; shift
+  _axle_run_get $dir root
+  local root=$REPLY cmd
+  IFS= read -rd '' cmd < $dir/cmd
+  local -a words=("${(@0)cmd}")                    # docker compose -f <file> up -d
+  ( cd -- $root && command "${(@)words[1,4]}" "$@" )
+}
+
 # Stop service <name>: the supervisor, the service and everything it started.
 _axle_run_stop_one() {
   local name=$1 dir=$_axle_run_dir/services/$1 REPLY
   [[ -d $dir ]] || return 1
+  if _axle_run_get $dir kind && [[ $REPLY == compose ]]; then
+    _axle_run_compose $dir down || return 1
+    _axle_run_forget $name
+    return 0
+  fi
   : >| $dir/stopping
   local -a pids=() left=() reply
   local pid
@@ -415,6 +459,8 @@ _axle_run_stop() {
   if [[ $1 == all ]]; then
     _axle_run_services; names=($reply)
     (( ${#names} )) || { print -r -- "nothing running"; return 0 }
+  elif [[ -z $1 ]] && _axle_run_mine; then
+    names=($reply)                                 # this project's (all its parts)
   else
     _axle_run_which $1 || return 1
     names=($REPLY)
@@ -430,6 +476,10 @@ _axle_run_restart() {
   _axle_run_which $1 || return 1
   local name=$REPLY dir=$_axle_run_dir/services/$REPLY
   local root port kind
+  if _axle_run_get $dir kind && [[ $REPLY == compose ]]; then
+    _axle_run_compose $dir restart && print -r -- "restarted $name"
+    return
+  fi
   _axle_run_get $dir root; root=$REPLY
   _axle_run_get $dir port; port=$REPLY
   _axle_run_get $dir kind; kind=$REPLY
@@ -450,6 +500,11 @@ _axle_run_logs() {
   [[ $1 == -f ]] && { follow=1; shift }
   _axle_run_which $1 || return 1
   local name=$REPLY dir=$_axle_run_dir/services/$REPLY
+  if _axle_run_get $dir kind && [[ $REPLY == compose ]]; then
+    if (( follow )); then _axle_run_compose $dir logs --tail 200 -f
+    else _axle_run_compose $dir logs --tail 200; fi
+    return
+  fi
   [[ -r $dir/log ]] || { print -r -- "$name: no output yet"; return 0 }
   # Looking at a crash is what clears its red tab.
   _axle_run_get $dir state

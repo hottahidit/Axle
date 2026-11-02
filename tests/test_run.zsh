@@ -233,7 +233,7 @@ test_run_static_folder_without_marker() {
   cd $T/fx/static
   out=$(axle run -n 2>&1)
   assert_contains "$out" "you're in it"
-  out=$(axle run -n $T/fx/nothing 2>&1) && fail "a folder with nothing to run isn't a project"
+  out=$(axle run -n $T/fx/nothing 2>&1) && fail "a folder with nothing to run isn't a project: $out"
   return 0
 }
 
@@ -567,4 +567,166 @@ test_run_ipv6_only_server_is_up() {
   local -i j; for j in {1..30}; do _axle_run_port_up $port || break; sleep 0.1; done
   _axle_run_port_up $port && fail "and down once it's gone"
   return 0
+}
+
+# --- M4: more projects ----------------------------------------------------------------
+
+test_run_detects_more_samples() {
+  AXLE_MODULES=(run) load_tool
+  fixtures
+  local -a cases=(
+    "compose-app|docker compose -f compose.yaml up -d | compose | 8080 | docker compose (2 services)"
+    "procfile-web|sh -c 'python3 -m http.server \$PORT' | service | 5000 | Procfile"
+    "make-run|make run | task |  | make"
+    "just-dev|just dev | task |  | just"
+    "rust-lib|none"
+  )
+  local c
+  for c in $cases; do
+    assert_eq "$(detect ${c%%|*})" "${c#*|}" "sample ${c%%|*}"
+  done
+}
+
+test_run_finds_parts() {
+  AXLE_MODULES=(run) load_tool
+  fixtures
+  local -a reply
+  _axle_run_parts $T/fx/monorepo
+  assert_eq "${(j: :)reply}" "api web" "a frontend and a backend (docs isn't a part)"
+  _axle_run_parts $T/fx/cargo-ws
+  assert_eq "${(j: :)reply}" "cli" "a Cargo workspace: the member with a binary"
+  _axle_run_parts $T/fx/compose-app
+  assert_eq "${(j: :)reply}" "." "compose runs the whole project"
+  local REPLY
+  _axle_run_partname $T/fx/monorepo web; assert_eq $REPLY monorepo-web "part names"
+}
+
+# A project of two static parts (on free ports) and one task part, for running.
+parts_project() {
+  local REPLY; free_port; typeset -g P1=$REPLY P2=$(( REPLY + 50 ))
+  mkdir -p $T/shop/{one,two,cli}
+  print '{"name": "shop", "workspaces": ["one", "two", "cli"]}' > $T/shop/package.json
+  print '<!doctype html>' > $T/shop/one/index.html; print '<!doctype html>' > $T/shop/two/index.html
+  print 'print("hello from cli", flush=True)' > $T/shop/cli/main.py; : > $T/shop/cli/requirements.txt
+  _axle_run_detect $T/shop >/dev/null 2>&1        # (load the real one)
+  functions[_axle_run_detect_orig]=$functions[_axle_run_detect]
+  _axle_run_detect() {
+    _axle_run_detect_orig "$@" || return 1
+    case $1 in
+      */one) _axle_run_cmd[-1]=$P1; _axle_run_port=$P1 ;;
+      */two) _axle_run_cmd[-1]=$P2; _axle_run_port=$P2 ;;
+    esac
+    return 0
+  }
+}
+
+test_run_parts_first_run_saves_the_choice() {
+  AXLE_MODULES=(run) load_tool
+  whence -p python3 >/dev/null || return 0
+  parts_project
+  rm -rf $T/shop/cli
+  cd $T/shop
+  local out
+  out=$(axle run --yes </dev/null 2>&1) || fail "starts: $out"
+  wait_state shop-one up; wait_state shop-two up
+  local -a reply; _axle_run_choice_load $T/shop
+  assert_eq "${(j: :)reply}" "one two" "no terminal to ask in: all, saved"
+  out=$(axle run -n 2>&1)
+  assert_contains "$out" "saved choice: one, two"
+  axle run stop >/dev/null
+  local -a left=($HOME/.local/state/axle/run/services/*(N))
+  (( ${#left} )) && fail "stop in the project stops all its parts: $left"
+  # A saved part that's gone: said, skipped, the rest runs.
+  _axle_run_choice_save $T/shop two gone
+  out=$(axle run --yes </dev/null 2>&1)
+  assert_contains "$out" "saved part gone has nothing to run any more: skipped"
+  wait_state shop-two up
+  [[ -e $HOME/.local/state/axle/run/services/shop-one ]] && fail "only the saved parts start"
+  axle run stop all >/dev/null
+  return 0
+}
+
+test_run_failing_part_shows_its_whole_log() {
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/app
+  print -l 'web: echo first line; seq 1 40; echo last line; exit 4' > $T/app/Procfile
+  cd $T/app
+  local out
+  out=$(axle run --yes </dev/null 2>&1) && fail "a part that fails: an error status"
+  assert_contains "$out" "exited (code 4)"
+  assert_contains "$out" "│ first line" "the whole log, from the first line"
+  assert_contains "$out" "│ 20" "the middle"
+  assert_contains "$out" "│ last line" "to the last"
+  assert_contains "$out" "didn't start: app"
+  return 0
+}
+
+test_run_verbose_without_tmux() {
+  AXLE_MODULES=(run) load_tool
+  whence -p python3 >/dev/null || return 0
+  parts_project
+  _axle_run_partname x y                          # (load parts.zsh, then replace its check)
+  _axle_run_have_tmux() { return 1 }
+  cd $T/shop
+  local out
+  out=$(axle run --yes --verbose 'shop-one, shop-two' </dev/null 2>&1) && fail "two verbose parts, no tmux"
+  assert_contains "$out" "too many to show verbosely in one shell (2)"
+  local -a left=($HOME/.local/state/axle/run/services/*(N))
+  (( ${#left} )) && fail "nothing started: $left"
+  # One verbose part: the others start in the background, then it runs here.
+  out=$(axle run --yes --verbose cli </dev/null 2>&1) || fail "runs: $out"
+  assert_contains "$out" "hello from cli" "the verbose part's output, in this shell"
+  wait_state shop-one up; wait_state shop-two up
+  axle run stop all >/dev/null
+  # --only: just that one.
+  out=$(axle run --yes --verbose cli --only </dev/null 2>&1)
+  assert_contains "$out" "hello from cli"
+  left=($HOME/.local/state/axle/run/services/*(N))
+  (( ${#left} )) && fail "--only starts nothing else: $left"
+  out=$(axle run --yes --verbose nope </dev/null 2>&1) && fail "an unknown part"
+  assert_contains "$out" "no part 'nope' in shop (parts: shop-cli, shop-one, shop-two)"
+  return 0
+}
+
+test_run_verbose_with_tmux() {
+  AXLE_MODULES=(run) load_tool
+  whence -p python3 >/dev/null || return 0
+  parts_project
+  # A stand-in tmux that records what it's asked.
+  mkdir -p $T/bin
+  print -l '#!/bin/sh' 'case $1 in has-session) exit 1 ;; esac' \
+    'printf "%s|" "$@" >> "$TMUX_LOG"; echo >> "$TMUX_LOG"' > $T/bin/tmux
+  chmod +x $T/bin/tmux
+  path=($T/bin $path); export TMUX_LOG=$T/tmux.log
+  cd $T/shop
+  local out
+  out=$(axle run --yes --verbose shop-one,shop-two --only </dev/null 2>&1) || fail "runs: $out"
+  assert_contains "$out" "tmux sessions: shop-one, shop-two"
+  local log=$(<$T/tmux.log)
+  assert_contains "$log" "new-session|-d|-s|shop-one|-c|$T/shop/one|-e|PORT=$P1|--|" "a session per part, in its folder, with its port"
+  assert_contains "$log" "-m|http.server|$P1|;|set-option|-t|=shop-one|remain-on-exit|on|" "the command as words; kept open after it ends"
+  assert_contains "$log" "new-session|-d|-s|shop-two|" "the second"
+  local -a left=($HOME/.local/state/axle/run/services/*(N))
+  (( ${#left} )) && fail "--only: nothing in the background: $left"
+  return 0
+}
+
+test_run_config_asks_again() {
+  zmodload zsh/zpty 2>/dev/null || return 0
+  AXLE_MODULES=(run) load_tool
+  parts_project
+  _axle_run_choice_save $T/shop one two
+  print -l "AXLE_MODULES=(run); source $ROOT/axle.plugin.zsh" "cd $T/shop" > $T/setup.zsh
+  zpty sh "HOME=$HOME XDG_CONFIG_HOME=$XDG_CONFIG_HOME XDG_CACHE_HOME=$XDG_CACHE_HOME XDG_DATA_HOME=$XDG_DATA_HOME HISTFILE=$T/hist TERM=xterm AXLE_UPDATE_CHECK=0 zsh -f -i"
+  zpty -w sh "PS1='> '; source $T/setup.zsh; : > $T/ready"
+  _wait() { local -i i; local c; for i in {1..150}; do while zpty -rt sh c 2>/dev/null; do :; done; [[ -e $1 ]] && return 0; sleep 0.1; done; fail "no answer ($1)" }
+  _wait $T/ready
+  # The list: shop-cli, shop-one, shop-two, with one and two ticked. Tick cli, untick one.
+  zpty -w sh "axle run --yes --config --only --verbose cli; : > $T/done"
+  sleep 1; zpty -n -w sh ' '; sleep 0.2; zpty -n -w sh $'\e[B'; sleep 0.2; zpty -n -w sh ' '; sleep 0.2
+  zpty -n -w sh $'\r'
+  _wait $T/done
+  zpty -w sh 'exit'; zpty -d sh 2>/dev/null
+  local -a reply; _axle_run_choice_load $T/shop
+  assert_eq "${(j: :)reply}" "cli two" "--config: chosen again, and saved"
 }

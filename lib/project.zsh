@@ -68,7 +68,8 @@ _axle_project_root() {
   local dir=${${1:-$PWD}:a} m
   reply=()
   while [[ $dir != $HOME && $dir != / && -n $dir ]]; do
-    local -a hits=($dir/(${(j:|:)~${(@b)_axle_root_markers}})(N:t))
+    # (Files only, except .git: a folder that happens to be named Makefile isn't one.)
+    local -a hits=($dir/(${(j:|:)~${(@b)_axle_root_markers}})(N^/:t) ${dir}/.git(N:t))
     if (( ${#hits} )); then
       for m in $_axle_root_markers; do
         (( ${hits[(Ie)$m]} )) && { reply=($dir $m); return 0 }

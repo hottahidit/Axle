@@ -5,6 +5,7 @@ zmodload zsh/datetime
 typeset -g ROOT=$AXLE_TEST_ROOT
 export AXLE_MARKS=0                       # no shell-integration escapes in captured output
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+export TMUX_TMPDIR=$T TMUX=''              # a tmux server of the test's own, never yours
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 fail() { print -r -- "  $*"; exit 1 }

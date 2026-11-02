@@ -173,9 +173,14 @@ Each milestone ends with its tests passing (Linux + macOS CI) and is usable on i
 - Conflict: one of yours → restart it; someone else's → stop it (asks) / next free port / cancel.
 - **Done when:** two projects on the same default port both run, the second on the next port.
 
-### M4 · More projects
+### M4 · More projects ✔
 - `docker compose` (up/down/logs, services in `ls`), `Procfile`, `Makefile` / `justfile`,
   pnpm / yarn / bun, Streamlit / Gradio / Dash, monorepos (several runnable folders → pick).
+- Monorepos: which parts to start is asked the first time (or `--config`) and saved per
+  project; a saved part that can't run is reported and the rest start; a failing part
+  shows its whole log.
+- `--verbose <parts>`: their output, each in a tmux session; without tmux one part in
+  the foreground after the others start (more than one is an error); `--only`.
 - **Done when:** fixtures for each pass; a monorepo asks which part.
 
 ### M5 · Your settings

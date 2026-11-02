@@ -181,6 +181,53 @@ _axle_run_exec() {
   )
 }
 
+# --- one part ------------------------------------------------------------------------------
+
+# Show the detected command and ask, the first time this project (part) runs it.
+#   _axle_run_approve <dir> <name> <yes>     returns 1 if you said no
+_axle_run_approve() {
+  local dir=$1 name=$2 yes=$3 REPLY
+  _axle_run_trust_key $dir
+  local key=$REPLY
+  _axle_run_trusted $key && return 0
+  if (( ! yes )); then
+    _axle_run_show $dir
+    _axle_printp "%F{${_axle_c[muted]:-244}}First run of this command in ${name//\%/%%} (${_axle_run_reason//\%/%%}).%f"
+    axle_confirm "Run it?  $_axle_run_what · $REPLY" n || return 1
+  fi
+  _axle_run_trust $key
+}
+
+# The ▶ line: the command about to run (and what axle run adds to its environment).
+_axle_run_say_cmd() {
+  local REPLY
+  _axle_run_show $1
+  _axle_printp "%F{${_axle_c[muted]:-244}}▶ ${REPLY//\%/%%}${_axle_run_env:+ (${(j:, :)_axle_run_env})}%f"
+}
+
+# docker compose: `up -d` in the foreground (it detaches its containers), then remember
+# it as a service so ls / stop / logs / restart work on it.
+_axle_run_compose_up() {
+  local dir=$1 name=$2 REPLY
+  whence -p docker >/dev/null || { print -u2 -r -- "axle run: $name uses docker compose, and docker isn't installed"; return 1 }
+  _axle_run_say_cmd $dir
+  _axle_run_exec $dir || { print -u2 -r -- "axle run: docker compose couldn't start $name"; return 1 }
+  _axle_run_state_init || return 1
+  local sdir=$_axle_run_dir/services/$name
+  mkdir -p -m 700 $sdir || return 1
+  _axle_run_put $sdir root $dir
+  print -rn -- "${(pj:\0:)_axle_run_cmd}" >| $sdir/cmd
+  _axle_run_put $sdir kind compose
+  _axle_run_put $sdir port "$_axle_run_port"
+  [[ -n $_axle_run_port ]] && _axle_run_put $sdir url http://localhost:$_axle_run_port
+  _axle_run_put $sdir started $EPOCHSECONDS
+  _axle_run_put $sdir state up
+  _axle_run_drop $name up "$_axle_run_port" "${_axle_run_port:+http://localhost:$_axle_run_port}" ''
+  _axle_printp "%F{${_axle_c[ok]:-green}}⚡%f %B${name//\%/%%}%b up (docker compose)${_axle_run_port:+ on http://localhost:$_axle_run_port}  %F{${_axle_c[muted]:-244}}(axle run logs · stop)%f"
+}
+
+# --- axle run ------------------------------------------------------------------------------
+
 _axle_cmd_run() {
   case $1 in
     ls|list)  shift; _axle_run_ls "$@"; return ;;
@@ -189,55 +236,35 @@ _axle_cmd_run() {
     logs|log) shift; _axle_run_logs "$@"; return ;;
     open)     shift; _axle_run_open "$@"; return ;;
   esac
-  local dry=0 yes=0 mode=''
-  local -a words=()
+  local dry=0 yes=0 mode='' config=0 only=0 vset=0
+  local -a words=() vnames=()
   while (( $# )); do
     case $1 in
       -n|--dry-run) dry=1 ;;
       -y|--yes)     yes=1 ;;
       --fg)         mode=fg ;;
       --bg)         mode=bg ;;
+      --config)     config=1 ;;
+      --only)       only=1 ;;
+      --verbose=*)  vset=1; vnames+=(${(s:,:)${${1#*=}// /,}}) ;;
+      -v|--verbose)
+        vset=1
+        if [[ -n $2 && $2 != -* ]] && (( $# > 1 )); then vnames+=(${(s:,:)${2// /,}}); shift; fi ;;
       --) shift; words+=("$@"); break ;;
       -*) print -u2 -r -- "axle run: unknown option '$1' (axle help run)"; return 1 ;;
       *)  words+=("$1") ;;
     esac
     shift
   done
+  vnames=(${vnames:#})
   _axle_run_pick "${words[@]}" || return 1
   local REPLY root=$_axle_run_root name=${_axle_run_root:t}
-  local muted=${_axle_c[muted]:-244} accent=${_axle_c[accent]:-magenta}
-  local found=0 show=''
-  _axle_run_detect $root && { found=1; _axle_run_show $root; show=$REPLY }
+  local muted=${_axle_c[muted]:-244} accent=${_axle_c[accent]:-magenta} warn=${_axle_c[warn]:-yellow}
+  local -a reply parts=()
+  _axle_run_parts $root && parts=($reply)
 
   if (( dry )); then
-    local venv=''
-    _axle_venv_in $root && venv=${REPLY#$root/}
-    _axle_printp "%B${name//\%/%%}%b"
-    print -r -- "  root   ${root/#$HOME/~}"
-    print -r -- "  why    $_axle_run_why${_axle_run_marker:+ · marked by $_axle_run_marker}"
-    [[ -n $venv ]] && print -r -- "  venv   $venv"
-    if (( found )); then
-      print -r -- "  run    $show"
-      print -r -- "  how    $_axle_run_what ($_axle_run_reason)"
-      if [[ $_axle_run_kind == service ]]; then
-        print -r -- "  kind   service${_axle_run_port:+ on http://localhost:$_axle_run_port} (runs in the background)"
-      else
-        print -r -- "  kind   task (runs in the foreground)"
-      fi
-      _axle_run_name $root
-      if _axle_run_alive $_axle_run_dir/services/$REPLY; then
-        print -r -- "  now    running as $REPLY (axle run ls)"
-      elif [[ -n $_axle_run_port ]] && _axle_run_port_up $_axle_run_port; then
-        local who='something else'
-        if _axle_run_port_service $_axle_run_port; then who="your service $REPLY"
-        elif _axle_run_port_holder $_axle_run_port; then who="$_axle_run_holder (pid $REPLY)"; fi
-        print -r -- "  port   $_axle_run_port is taken by $who: axle run would ${${_axle_run_portway:+offer the next free one}:-ask what to do}"
-      fi
-      _axle_run_trust_key $root
-      _axle_run_trusted $REPLY || print -r -- "  trust  not run before: axle run asks first"
-    else
-      print -r -- "  run    ? (no way to run it found)"
-    fi
+    _axle_run_dry $root "${parts[@]}"
     return 0
   fi
 
@@ -248,43 +275,200 @@ _axle_cmd_run() {
   fi
   [[ ${PWD:a} == $root || ${PWD:a} == $root/* ]] || cd -- $root || return 1
 
-  if (( ! found )); then
-    print -u2 -r -- "axle run: no way to run ${name} found (looked for package.json scripts, Python apps,"
-    print -u2 -r -- "  Cargo.toml, go.mod, index.html). Setting a command per project comes later (M5)."
+  if (( ! ${#parts} )); then
+    print -u2 -r -- "axle run: no way to run ${name} found (looked for compose files, a Procfile, package.json"
+    print -u2 -r -- "  scripts, Python apps, Cargo.toml, go.mod, a Makefile / justfile, index.html)."
     return 1
   fi
 
-  # Already running: say so (with what you can do) rather than asking again.
-  if [[ $_axle_run_kind == service && $mode != fg ]]; then
-    _axle_run_name $root
-    _axle_run_alive $_axle_run_dir/services/$REPLY && { _axle_run_bg $root $REPLY; return }
+  # Which parts: the only one; else the saved choice (asked the first time, or --config).
+  local -a chosen=()
+  if (( ${#parts} == 1 )); then
+    chosen=($parts)
+    (( config )) && _axle_printp "%F{$muted}${name//\%/%%} has one runnable part: nothing to choose.%f"
+  else
+    local -a saved=()
+    _axle_run_choice_load $root && saved=($reply)
+    if (( config || ! ${#saved} )); then
+      _axle_run_choose $root $parts || return 1
+      chosen=($reply)
+      _axle_run_choice_save $root $chosen
+      (( config )) && _axle_printp "%F{$muted}Saved: axle run starts ${(j:, :)chosen} in ${name//\%/%%} (change with --config).%f"
+    else
+      chosen=(${saved:*parts})
+      local gone
+      for gone in ${saved:|parts}; do
+        _axle_printp "%F{$warn}!%f saved part ${gone//\%/%%} has nothing to run any more: skipped %F{$muted}(axle run --config to choose again)%f"
+      done
+      if (( ! ${#chosen} )); then
+        _axle_printp "%F{$warn}!%f none of the saved parts can run: choose again"
+        _axle_run_choose $root $parts || return 1
+        chosen=($reply)
+        _axle_run_choice_save $root $chosen
+      fi
+    fi
   fi
 
-  _axle_run_trust_key $root
-  local key=$REPLY trusted=0
-  _axle_run_trusted $key && trusted=1
-  local summary="$_axle_run_what · $show"
-  if (( ! trusted && ! yes )); then
-    _axle_printp "%F{$muted}First run of this command in ${name//\%/%%} (${_axle_run_reason//\%/%%}).%f"
-    axle_confirm "Run it?  $summary" n || return 1
-  elif [[ $_axle_run_from == last ]] && (( ! yes )); then
-    axle_confirm "Run it?  $summary" y || return 0
+  # Shown verbosely: the parts named (or, with no names, all chosen ones).
+  local -a vparts=()
+  local v p
+  if (( vset )); then
+    if (( ! ${#vnames} )); then
+      vparts=($chosen)
+    else
+      for v in $vnames; do
+        local hit=''
+        for p in $parts; do
+          _axle_run_partname $root $p
+          [[ $v == ($REPLY|$p|${p:t}) || ( $p == . && $v == $name ) ]] && { hit=$p; break }
+        done
+        if [[ -z $hit ]]; then
+          local -a known=()
+          for p in $parts; do _axle_run_partname $root $p; known+=($REPLY); done
+          print -u2 -r -- "axle run: no part '$v' in $name (parts: ${(j:, :)known})"
+          return 1
+        fi
+        vparts+=($hit)
+        (( ${chosen[(Ie)$hit]} )) || chosen+=($hit)        # named: run it even if not saved
+      done
+    fi
+    vparts=(${(u)vparts})
   fi
-  (( trusted )) || _axle_run_trust $key
+  local tmux=0
+  if (( ${#vparts} && ${#parts} > 1 )) && _axle_run_have_tmux; then
+    tmux=1
+  elif (( ${#vparts} > 1 )); then
+    print -u2 -r -- "axle run: too many to show verbosely in one shell (${#vparts}): install tmux to get a session for each, or name one"
+    return 1
+  fi
 
-  local bg=0
-  [[ $_axle_run_kind == service ]] && bg=1
-  [[ $mode == fg ]] && bg=0
-  [[ $mode == bg ]] && bg=1
-  if (( bg )); then
-    _axle_run_name $root
-    local svc=$REPLY
-    _axle_run_resolve_port $root $svc || return 1
-    _axle_run_show $root
-    _axle_printp "%F{$muted}▶ ${${REPLY}//\%/%%}${_axle_run_env:+ (${(j:, :)_axle_run_env})}%f"
-    _axle_run_bg $root $svc
+  if [[ $_axle_run_from == last ]] && (( ! yes )); then
+    local -a names=()
+    for p in $chosen; do _axle_run_partname $root $p; names+=($REPLY); done
+    axle_confirm "Run ${(j:, :)names}?" y || return 0
+  fi
+
+  # Start each part: services in the background, verbose ones in tmux; the one shown in
+  # this shell (or a single task) runs last, in the foreground. A part that can't run is
+  # reported, and the others still start.
+  local -a failed=() sessions=() tasks=()
+  local fg='' dir svc
+  for p in $chosen; do
+    dir=$root${${p:#.}:+/$p}
+    _axle_run_partname $root $p
+    _axle_run_name $dir $REPLY; svc=$REPLY
+    if ! _axle_run_detect $dir; then
+      _axle_printp "%F{$warn}!%f ${svc//\%/%%}: nothing to run there any more: skipped"
+      failed+=($svc); continue
+    fi
+    if (( ${vparts[(Ie)$p]} )); then
+      if (( tmux )); then
+        _axle_run_approve $dir $svc $yes || { failed+=($svc); continue }
+        [[ $_axle_run_kind == service ]] && { _axle_run_resolve_port $dir $svc || { failed+=($svc); continue } }
+        _axle_run_say_cmd $dir
+        if _axle_run_tmux $dir $svc; then sessions+=($svc); else failed+=($svc); fi
+      else
+        fg=$p
+      fi
+      continue
+    fi
+    (( only && ${#vparts} )) && continue
+    # Already running: say so (with what you can do) rather than asking again.
+    if [[ $_axle_run_kind == (service|compose) && $mode != fg ]] && _axle_run_alive $_axle_run_dir/services/$svc; then
+      _axle_run_bg $dir $svc; continue
+    fi
+    local bg=0
+    [[ $_axle_run_kind == service ]] && bg=1
+    [[ $mode == fg ]] && bg=0
+    [[ $mode == bg && $_axle_run_kind != compose ]] && bg=1
+    if [[ $_axle_run_kind == compose ]]; then
+      _axle_run_approve $dir $svc $yes || { failed+=($svc); continue }
+      _axle_run_compose_up $dir $svc || failed+=($svc)
+    elif (( bg )); then
+      _axle_run_approve $dir $svc $yes || { failed+=($svc); continue }
+      _axle_run_resolve_port $dir $svc || { failed+=($svc); continue }
+      _axle_run_say_cmd $dir
+      _axle_run_bg $dir $svc || failed+=($svc)
+    else
+      tasks+=($p)
+    fi
+  done
+  # Foreground: the verbose part, else the one task. Several tasks can't share a shell.
+  if [[ -z $fg ]] && (( ${#tasks} == 1 )); then
+    fg=$tasks[1]
+  elif (( ${#tasks} > 1 )); then
+    for p in $tasks; do _axle_run_partname $root $p; failed+=($REPLY); done
+    print -u2 -r -- "axle run: ${#tasks} parts run in the foreground (${(j:, :)tasks}); one shell holds one: use --verbose with tmux, or name one"
+  fi
+  if (( ${#sessions} )); then
+    _axle_printp "%F{$muted}tmux sessions: ${(j:, :)sessions} (tmux attach -t <name>; Ctrl-b s to switch)%f"
+  fi
+  if (( ${#failed} )); then
+    _axle_printp "%F{${_axle_c[error]:-red}}✘%f didn't start: ${(j:, :)failed}"
+  fi
+  if [[ -n $fg ]]; then
+    dir=$root${${fg:#.}:+/$fg}
+    _axle_run_partname $root $fg; svc=$REPLY
+    _axle_run_detect $dir || return 1
+    _axle_run_approve $dir $svc $yes || return 1
+    _axle_run_say_cmd $dir
+    _axle_run_exec $dir
     return
   fi
-  _axle_printp "%F{$muted}▶ ${show//\%/%%}%f"
-  _axle_run_exec $root
+  (( ${#sessions} )) && _axle_run_tmux_show $sessions[1]
+  (( ! ${#failed} ))
+}
+
+# --dry-run: the project, why, and for each part what would run.
+_axle_run_dry() {
+  local root=$1; shift
+  local -a parts=("$@") saved=() reply
+  local REPLY p dir name=${root:t} venv
+  _axle_printp "%B${name//\%/%%}%b"
+  print -r -- "  root   ${root/#$HOME/~}"
+  print -r -- "  why    $_axle_run_why${_axle_run_marker:+ · marked by $_axle_run_marker}"
+  _axle_venv_in $root && print -r -- "  venv   ${REPLY#$root/}"
+  if (( ! ${#parts} )); then
+    print -r -- "  run    ? (no way to run it found)"
+    return 0
+  fi
+  if (( ${#parts} > 1 )); then
+    _axle_run_choice_load $root && saved=($reply)
+    local -a still=(${saved:*parts})               # (:* doesn't work nested)
+    if (( ${#saved} )); then
+      print -r -- "  parts  ${#parts}; saved choice: ${(j:, :)still} (axle run --config to change)"
+    else
+      print -r -- "  parts  ${#parts}; axle run asks which to start the first time"
+    fi
+  fi
+  for p in $parts; do
+    dir=$root${${p:#.}:+/$p}
+    _axle_run_detect $dir || continue
+    _axle_run_partname $root $p
+    local svc=$REPLY ind='  '
+    if (( ${#parts} > 1 )); then
+      _axle_printp "  %B${svc//\%/%%}%b ${${p:#.}:+($p)}"
+      ind='    '
+    fi
+    [[ $p != . ]] && _axle_venv_in $dir && print -r -- "${ind}venv   ${REPLY#$dir/}"
+    _axle_run_show $dir
+    print -r -- "${ind}run    $REPLY"
+    print -r -- "${ind}how    $_axle_run_what ($_axle_run_reason)"
+    case $_axle_run_kind in
+      service) print -r -- "${ind}kind   service${_axle_run_port:+ on http://localhost:$_axle_run_port} (runs in the background)" ;;
+      compose) print -r -- "${ind}kind   docker compose${_axle_run_port:+ (port $_axle_run_port)}: up -d, then down to stop" ;;
+      *)       print -r -- "${ind}kind   task (runs in the foreground)" ;;
+    esac
+    _axle_run_name $dir $svc
+    if _axle_run_alive $_axle_run_dir/services/$REPLY; then
+      print -r -- "${ind}now    running as $REPLY (axle run ls)"
+    elif [[ $_axle_run_kind == service && -n $_axle_run_port ]] && _axle_run_port_up $_axle_run_port; then
+      local who='something else'
+      if _axle_run_port_service $_axle_run_port; then who="your service $REPLY"
+      elif _axle_run_port_holder $_axle_run_port; then who="$_axle_run_holder (pid $REPLY)"; fi
+      print -r -- "${ind}port   $_axle_run_port is taken by $who: axle run would ${${_axle_run_portway:+offer the next free one}:-ask what to do}"
+    fi
+    _axle_run_trust_key $dir
+    _axle_run_trusted $REPLY || print -r -- "${ind}trust  not run before: axle run asks first"
+  done
 }

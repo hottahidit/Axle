@@ -91,7 +91,8 @@ _axle_complete() {
         compadd -a svcs
       elif [[ $PREFIX == -* ]]; then
         _values option '--dry-run[say what would run, and why]' '--yes[run without asking]' \
-          '--fg[in the foreground]' '--bg[in the background]'
+          '--fg[in the foreground]' '--bg[in the background]' '--config[choose the parts again]' \
+          '--verbose[show these parts'"'"' output]' '--only[just the --verbose parts]'
       elif (( $+functions[_axle_jump_complete] )); then
         shift words; (( CURRENT-- ))
         _axle_jump_complete

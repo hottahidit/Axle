@@ -26,6 +26,16 @@
     program: `/proc` on Linux, `lsof` on macOS) and offers the next free port (passed the
     way the framework takes it: `--port`, `-p`, `-- --port` for npm, `PORT`, ...),
     stopping the other, or cancel; without a terminal, the next free port.
+  - More projects: docker compose (`up -d`; `stop` is `down`, `logs` its logs), a
+    Procfile's `web:` line, Makefile / justfile `run` / `dev` / `serve` / `start`.
+  - Projects with several parts (a frontend and a backend, npm / pnpm workspaces, a Cargo
+    workspace, `apps/*`, `services/*`): the first time (or with `--config`) it asks which
+    to start and saves the choice. A saved part that can't run any more is reported and
+    the rest start; a part that fails shows its whole log. `axle run stop` in the
+    project stops all its parts.
+  - `--verbose 'shop-web, shop-api'` shows those parts' output: each in its own tmux
+    session (with tmux), or, without tmux, one part in this shell after the others start
+    in the background (`--only` to start just that one).
   - `axle run ls` (state, port, uptime, memory, URL), `stop [name|all]`, `restart`,
     `logs [-f]` (which also clears a red tab) and `open`; `--fg` / `--bg` to choose.
   - Asks before a project's command runs the first time, and remembers per project and

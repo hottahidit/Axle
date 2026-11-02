@@ -65,10 +65,13 @@ _axle_run_detect() {
 _axle_run_detect_any() {
   setopt localoptions extendedglob
   local root=$1 REPLY
-  _axle_run_detect_node $root   && return 0
-  _axle_run_detect_python $root && return 0
-  _axle_run_detect_rust $root   && return 0
-  _axle_run_detect_go $root     && return 0
+  _axle_run_detect_compose $root  && return 0
+  _axle_run_detect_procfile $root && return 0
+  _axle_run_detect_node $root     && return 0
+  _axle_run_detect_python $root   && return 0
+  _axle_run_detect_rust $root     && return 0
+  _axle_run_detect_go $root       && return 0
+  _axle_run_detect_make $root     && return 0
   if [[ -f $root/index.html ]]; then
     _axle_run_python $root
     _axle_run_cmd=($REPLY -m http.server 8000)
@@ -121,6 +124,74 @@ _axle_run_detect_port() {
       for f in $reply; do [[ $f == (#b)PORT=([0-9](#c2,5)) ]] && _axle_run_port=$match[1]; done
   fi
   return 0
+}
+
+# --- docker compose, Procfile, Makefile / justfile -------------------------------------
+
+# docker compose: `up -d` (it runs its containers itself), `down` to stop, its logs.
+_axle_run_detect_compose() {
+  setopt localoptions extendedglob
+  local root=$1 REPLY f line
+  local -a files=($root/(compose.yaml|compose.yml|docker-compose.yml|docker-compose.yaml)(N.))
+  (( ${#files} )) && _axle_run_read $files[1] || return 1
+  local text=$REPLY port='' in=0
+  local -i n=0
+  for line in ${(f)text}; do
+    [[ $line == '  '[A-Za-z0-9_.-]##:[[:space:]]# && $in == services ]] && (( n++ ))
+    [[ $line == services:* ]] && in=services
+    [[ $line == [A-Za-z]*:* && $line != services:* ]] && in=''
+    # The first published port: "8080:80", 127.0.0.1:8080:80, - 8080:80
+    [[ -z $port && $line == (#b)[[:space:]]#-[[:space:]]#[\"\']#([0-9.]##:|)([0-9](#c2,5)):[0-9]* ]] && port=$match[2]
+  done
+  _axle_run_cmd=(docker compose -f ${files[1]:t} up -d)
+  _axle_run_source=$text
+  _axle_run_set compose "$port" "docker compose ($n service${${n:#1}:+s})" ${files[1]:t}
+  return 0
+}
+
+# A Procfile's web: line (a shell command line, so it runs through sh -c, like foreman).
+_axle_run_detect_procfile() {
+  setopt localoptions extendedglob
+  local root=$1 REPLY line
+  _axle_run_read $root/Procfile || return 1
+  for line in ${(f)REPLY}; do
+    [[ $line == (#b)web:[[:space:]]#(*) && -n $match[1] ]] || continue
+    _axle_run_cmd=(sh -c $match[1])
+    _axle_run_source=$match[1]
+    _axle_run_set service 5000 'Procfile' "Procfile web: $match[1]"
+    return 0
+  done
+  return 1
+}
+
+# A Makefile or justfile target: run, dev, serve or start (in that order).
+_axle_run_detect_make() {
+  setopt localoptions extendedglob
+  local root=$1 REPLY t line
+  local -a targets=()
+  if _axle_run_read $root/justfile || _axle_run_read $root/Justfile; then
+    for line in ${(f)REPLY}; do
+      [[ $line == (#b)(run|dev|serve|start)([[:space:]]##[^:]#|):(|[^=]*) ]] && targets+=($match[1])
+    done
+    for t in run dev serve start; do
+      (( ${targets[(Ie)$t]} )) || continue
+      _axle_run_cmd=(just $t); _axle_run_source=$t
+      _axle_run_set task '' just "justfile recipe $t"
+      return 0
+    done
+  fi
+  targets=()
+  _axle_run_read $root/Makefile || _axle_run_read $root/makefile || return 1
+  for line in ${(f)REPLY}; do
+    [[ $line == (#b)(run|dev|serve|start)[[:space:]]#:([^=]*|) ]] && targets+=($match[1])
+  done
+  for t in run dev serve start; do
+    (( ${targets[(Ie)$t]} )) || continue
+    _axle_run_cmd=(make $t); _axle_run_source=$t
+    _axle_run_set task '' make "Makefile target $t"
+    return 0
+  done
+  return 1
 }
 
 # --- Node -------------------------------------------------------------------------
@@ -208,6 +279,12 @@ _axle_run_detect_python() {
   local -a files=($root/(main|app|server|api|asgi|wsgi|run|streamlit_app).py(N.)
                   $root/*.py(N.) $root/(app|api|src|server|backend)/*.py(N.))
   files=(${(u)files})
+  # A subfolder that's a project of its own (in a monorepo) is a part, not this app.
+  local sub
+  for sub in $root/(app|api|src|server|backend)(N/); do
+    [[ -n $sub/(pyproject.toml|requirements.txt|setup.py|Pipfile|package.json)(#qN[1]) ]] &&
+      files=(${files:#$sub/*})
+  done
   local f text line var='' fw='' rel
   for f in ${files[1,40]}; do
     [[ ${f:t} == -* ]] && continue                 # (would read as an option)
@@ -288,7 +365,9 @@ _axle_run_detect_rust() {
   local root=$1 REPLY
   _axle_run_read $root/Cargo.toml || return 1
   local toml=$REPLY line fw='' port=''
-  [[ $toml == *'[package]'* ]] || return 1        # a bare workspace: M4 picks a member
+  [[ $toml == *'[package]'* ]] || return 1        # a bare workspace: its members are parts
+  [[ -f $root/src/main.rs || $toml == *'[[bin]]'* || -n $root/src/bin/*.rs(#qN[1]) ]] ||
+    return 1                                       # a library: nothing to run
   for line in ${(f)toml}; do
     case $line in
       ([[:space:]]#axum[[:space:]=.]*)      fw=axum port=3000 ;;
