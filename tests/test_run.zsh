@@ -550,3 +550,21 @@ test_run_port_question_in_a_terminal() {
   zpty -w sh 'axle run stop all; exit'; sleep 0.5; zpty -d sh 2>/dev/null
   return 0
 }
+
+# A server listening only on IPv6 (like Vite on ::1) counts as up.
+test_run_ipv6_only_server_is_up() {
+  AXLE_MODULES=(run) load_tool
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  local REPLY port; free_port; port=$REPLY
+  $py -m http.server $port --bind ::1 >/dev/null 2>&1 &
+  local pid=$!
+  local -i i ok=0
+  for i in {1..50}; do _axle_run_port_up $port && { ok=1; break }; sleep 0.1; done
+  # (No IPv6 on this machine: python couldn't bind, nothing to check.)
+  if ! kill -0 $pid 2>/dev/null; then return 0; fi
+  kill $pid 2>/dev/null
+  (( ok )) || fail "an IPv6-only listener on $port is up"
+  local -i j; for j in {1..30}; do _axle_run_port_up $port || break; sleep 0.1; done
+  _axle_run_port_up $port && fail "and down once it's gone"
+  return 0
+}

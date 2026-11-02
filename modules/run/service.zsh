@@ -48,15 +48,32 @@ _axle_run_alive() {
   _axle_run_pstart $pid && [[ $REPLY == $want ]]
 }
 
-# Does something answer on this port (IPv4 or IPv6 localhost)? No subprocess.
+# Does something answer on this port? IPv4 by connecting (zsh's ztcp: no subprocess);
+# IPv6 (a server on ::1 or :: only, like Vite under recent Node) by looking for a
+# listener: /proc/net/tcp6 on Linux (no subprocess), nc or lsof elsewhere. (ztcp can't
+# do IPv6.)
 _axle_run_port_up() {
-  local host fd
-  for host in 127.0.0.1 ::1; do
-    ztcp $host $1 2>/dev/null || continue
+  local port=$1 fd line hex
+  if ztcp 127.0.0.1 $port 2>/dev/null; then
     fd=$REPLY; ztcp -c $fd 2>/dev/null
     return 0
-  done
-  return 1
+  fi
+  if [[ -r /proc/net/tcp6 ]]; then
+    printf -v hex '%04X' $port
+    while IFS= read -r line; do
+      local -a w=(${=line})
+      [[ ${w[2]##*:} == $hex && $w[4] == 0A ]] && return 0
+    done < /proc/net/tcp6
+    return 1
+  fi
+  [[ -d /proc/net ]] && return 1                   # Linux without IPv6
+  if whence -p nc >/dev/null; then
+    command nc -z -w 1 ::1 $port >/dev/null 2>&1
+  elif whence -p lsof >/dev/null; then
+    [[ -n $(command lsof -nP -iTCP:$port -sTCP:LISTEN -t 2>/dev/null) ]]
+  else
+    return 1
+  fi
 }
 
 # The first local URL a server printed in its log (REPLY = port, _axle_run_logurl = URL).

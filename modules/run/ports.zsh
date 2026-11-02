@@ -34,7 +34,8 @@ _axle_run_port_holder() {
     return 1
   fi
   whence -p lsof >/dev/null || return 1
-  pid=${${(f)"$(command lsof -nP -iTCP:$port -sTCP:LISTEN -t 2>/dev/null)"}[1]}
+  local -a pids=(${(f)"$(command lsof -nP -iTCP:$port -sTCP:LISTEN -t 2>/dev/null)"})
+  pid=$pids[1]
   [[ -n $pid ]] || return 1
   REPLY=$pid
   _axle_run_holder=$(command ps -o comm= -p $pid 2>/dev/null)
