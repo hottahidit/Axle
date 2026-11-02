@@ -14,7 +14,7 @@ _axle_lazy modules/run/main.zsh _axle_cmd_run _axle_run_pick _axle_run_last _axl
 _axle_lazy modules/run/service.zsh _axle_run_get _axle_run_put _axle_run_drop _axle_run_start _axle_run_bg _axle_run_ls _axle_run_stop \
                                    _axle_run_restart _axle_run_logs _axle_run_open _axle_run_name \
                                    _axle_run_alive _axle_run_envfile _axle_run_services _axle_run_stop_one _axle_run_mine \
-                                   _axle_run_port_up
+                                   _axle_run_port_up _axle_run_bounded
 _axle_lazy modules/run/ports.zsh _axle_run_port_holder _axle_run_port_service _axle_run_free_port \
                                  _axle_run_apply_port _axle_run_resolve_port
 _axle_lazy modules/run/parts.zsh _axle_run_parts _axle_run_partname _axle_run_choice_load \

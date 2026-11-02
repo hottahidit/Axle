@@ -51,8 +51,8 @@ _axle_run_alive() {
 
 # Does something answer on this port? IPv4 by connecting (zsh's ztcp: no subprocess);
 # IPv6 (a server on ::1 or :: only, like Vite under recent Node) by looking for a
-# listener: /proc/net/tcp6 on Linux (no subprocess), nc (macOS) or lsof elsewhere.
-# (ztcp can't do IPv6.)
+# listener: /proc/net/tcp6 on Linux (no subprocess), else lsof (asks the system, no
+# network) or, failing that, nc. (ztcp can't do IPv6.) Those tools get 2 s at most.
 _axle_run_port_up() {
   local port=$1 fd line hex
   if ztcp 127.0.0.1 $port 2>/dev/null; then
@@ -68,15 +68,25 @@ _axle_run_port_up() {
     return 1
   fi
   [[ -d /proc/net ]] && return 1                   # Linux without IPv6
-  if [[ $OSTYPE == darwin* ]] && whence -p nc >/dev/null; then
-    # -G: a 1 s limit on connecting (-w alone doesn't bound it, and a dropped connection
-    # would block for the system's ~75 s TCP timeout).
-    command nc -z -G 1 -w 1 ::1 $port >/dev/null 2>&1
-  elif whence -p lsof >/dev/null; then
-    [[ -n $(command lsof -nP -iTCP:$port -sTCP:LISTEN -t 2>/dev/null) ]]
+  if whence -p lsof >/dev/null; then
+    _axle_run_bounded command lsof -nP -iTCP:$port -sTCP:LISTEN -t
+  elif whence -p nc >/dev/null; then
+    _axle_run_bounded command nc -z -w 1 ::1 $port
   else
     return 1
   fi
+}
+
+# Run a command for at most 2 s (its status; 1 if it took longer, and it's ended).
+_axle_run_bounded() {
+  "$@" </dev/null >/dev/null 2>&1 &
+  local -i pid=$! i
+  for i in {1..40}; do
+    if ! kill -0 $pid 2>/dev/null; then wait $pid; return; fi
+    zselect -t 5
+  done
+  kill -KILL $pid 2>/dev/null
+  return 1
 }
 
 # The first local URL a server printed in its log (REPLY = port, _axle_run_logurl = URL).
@@ -267,6 +277,8 @@ _axle_run_supervise() {
   local -a cmd=("$@")
   typeset -g _axle_run_dir=${dir:h:h}
   trap '' HUP INT QUIT TTOU TTIN                   # keeps running when the terminal closes
+  # AXLE_RUN_DEBUG: a trace of the supervisor in <dir>/trace (the tests turn it on).
+  if [[ -n $AXLE_RUN_DEBUG ]]; then exec 2>>$dir/trace; setopt xtrace; fi
   _axle_run_put $dir watcher $$
   cd -- $root || { _axle_run_put $dir state crashed; _axle_run_put $dir code 1; return 1 }
   local REPLY e
@@ -277,7 +289,7 @@ _axle_run_supervise() {
   fi
   [[ -n $port ]] && export PORT=$port
   for e in $envs; do export "$e"; done             # .env values (data) and ours, as given
-  "${cmd[@]}" &
+  "${cmd[@]}" 2>&1 &                               # (its errors to the log too)
   local -i spid=$!
   _axle_run_pstart $spid && _axle_run_put $dir pstart $REPLY
   _axle_run_put $dir pid $spid

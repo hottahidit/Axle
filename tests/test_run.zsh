@@ -292,7 +292,7 @@ wait_state() {
   for f in $d/*(N); do [[ ${f:t} == (log|cmd) ]] || info+=" ${f:t}=$(<$f)"; done
   local w='' p=''
   [[ -r $d/watcher ]] && w=$(<$d/watcher); [[ -r $d/pid ]] && p=$(<$d/pid)
-  fail "$1 never became $2 (last: ${s:-none};$info; procs: $(ps -o pid=,stat=,args= -p ${w:-1},${p:-1} 2>&1 | cut -c1-80 | tr '\n' ';'); log: $(tail -5 $d/log 2>/dev/null))"
+  fail "$1 never became $2 (last: ${s:-none};$info; procs: $(ps -o pid=,stat=,args= -p ${w:-1},${p:-1} 2>&1 | cut -c1-80 | tr '\n' ';'); log: $(tail -5 $d/log 2>/dev/null); trace: $(tail -25 $d/trace 2>/dev/null | cut -c1-140))"
 }
 
 # A small web project serving on a port of our choosing: python's http.server.
@@ -652,12 +652,14 @@ test_run_failing_part_shows_its_whole_log() {
   print -l 'web: echo first line; seq 1 40; echo last line; exit 4' > $T/app/Procfile
   cd $T/app
   local out
-  out=$(axle run --yes </dev/null 2>&1) && fail "a part that fails: an error status"
+  local -i rc=0
+  out=$(axle run --yes </dev/null 2>&1) || rc=$?
   assert_contains "$out" "exited (code 4)"
   assert_contains "$out" "│ first line" "the whole log, from the first line"
   assert_contains "$out" "│ 20" "the middle"
   assert_contains "$out" "│ last line" "to the last"
   assert_contains "$out" "didn't start: app"
+  (( rc )) || fail "a part that fails: an error status"
   return 0
 }
 
