@@ -301,11 +301,11 @@ $tr
 log: $(tail -3 $d/log 2>/dev/null | cut -c1-80)"
 }
 
-# A small web project serving on a port of our choosing: python's http.server.
+# A small web project serving on a port of our choosing (tests/serve.py).
 web_project() {
   mkdir -p $T/web; print '<!doctype html>' > $T/web/index.html; : > $T/web/requirements.txt
   local py; py=$(whence -p python3 || whence -p python) || return 1
-  typeset -ga _axle_run_cmd=($py -m http.server $1 --bind 127.0.0.1)
+  typeset -ga _axle_run_cmd=($py $ROOT/tests/serve.py $1)
   typeset -g _axle_run_kind=service _axle_run_port=$1
 }
 
@@ -497,7 +497,7 @@ test_run_port_holder() {
   local py; py=$(whence -p python3 || whence -p python) || return 0
   [[ -r /proc/net/tcp ]] || whence -p lsof >/dev/null || return 0
   local REPLY port; free_port; port=$REPLY
-  $py -m http.server $port --bind 127.0.0.1 >/dev/null 2>&1 &
+  $py $ROOT/tests/serve.py $port >/dev/null 2>&1 &
   local pid=$!
   local -i i; for i in {1..50}; do _axle_run_port_up $port && break; sleep 0.1; done
   _axle_run_port_holder $port; local got=$REPLY
@@ -517,7 +517,7 @@ test_run_two_projects_same_port() {
   functions[_axle_run_detect_orig]=$functions[_axle_run_detect]
   _axle_run_detect >/dev/null 2>&1 $T/one   # (load the real one)
   functions[_axle_run_detect_orig]=$functions[_axle_run_detect]
-  _axle_run_detect() { _axle_run_detect_orig "$@" || return 1; _axle_run_cmd[-1]=$port; _axle_run_port=$port }
+  _axle_run_detect() { _axle_run_detect_orig "$@" || return 1; _axle_run_cmd=($_axle_run_cmd[1] $ROOT/tests/serve.py $port); _axle_run_port=$port }
   local out
   cd $T/one; out=$(axle run --yes </dev/null 2>&1) || fail "the first runs: $out"
   wait_state one up
@@ -542,7 +542,7 @@ test_run_port_question_in_a_terminal() {
   print -l "AXLE_MODULES=(run); source $ROOT/axle.plugin.zsh" \
     "_axle_run_detect $T/one >/dev/null 2>&1" \
     'functions[_axle_run_detect_orig]=$functions[_axle_run_detect]' \
-    "_axle_run_detect() { _axle_run_detect_orig \"\$@\" || return 1; _axle_run_cmd[-1]=$port; _axle_run_port=$port }" \
+    "_axle_run_detect() { _axle_run_detect_orig \"\$@\" || return 1; _axle_run_cmd=(\$_axle_run_cmd[1] $ROOT/tests/serve.py $port); _axle_run_port=$port }" \
     > $T/setup.zsh
   zpty sh "HOME=$HOME XDG_CONFIG_HOME=$XDG_CONFIG_HOME XDG_CACHE_HOME=$XDG_CACHE_HOME XDG_DATA_HOME=$XDG_DATA_HOME HISTFILE=$T/hist TERM=xterm AXLE_UPDATE_CHECK=0 zsh -f -i"
   zpty -w sh "PS1='> '; source $T/setup.zsh; cd $T/one; axle run --yes; cd $T/two; : > $T/ready"
@@ -564,7 +564,7 @@ test_run_ipv6_only_server_is_up() {
   AXLE_MODULES=(run) load_tool
   local py; py=$(whence -p python3 || whence -p python) || return 0
   local REPLY port; free_port; port=$REPLY
-  $py -m http.server $port --bind ::1 >/dev/null 2>&1 &
+  $py $ROOT/tests/serve.py $port ::1 >/dev/null 2>&1 &
   local pid=$!
   local -i i ok=0
   for i in {1..50}; do _axle_run_port_up $port && { ok=1; break }; sleep 0.1; done
@@ -621,8 +621,8 @@ parts_project() {
   _axle_run_detect() {
     _axle_run_detect_orig "$@" || return 1
     case $1 in
-      */one) _axle_run_cmd[-1]=$P1; _axle_run_port=$P1 ;;
-      */two) _axle_run_cmd[-1]=$P2; _axle_run_port=$P2 ;;
+      */one) _axle_run_cmd=($_axle_run_cmd[1] $ROOT/tests/serve.py $P1); _axle_run_port=$P1 ;;
+      */two) _axle_run_cmd=($_axle_run_cmd[1] $ROOT/tests/serve.py $P2); _axle_run_port=$P2 ;;
     esac
     return 0
   }
@@ -714,7 +714,7 @@ test_run_verbose_with_tmux() {
   assert_contains "$out" "tmux sessions: shop-one, shop-two"
   local log=$(<$T/tmux.log)
   assert_contains "$log" "new-session|-d|-s|shop-one|-c|$T/shop/one|-e|PORT=$P1|--|" "a session per part, in its folder, with its port"
-  assert_contains "$log" "|axle-run|python3|-m|http.server|$P1|" "the command as words, kept open after it ends"
+  assert_contains "$log" "|axle-run|python3|$ROOT/tests/serve.py|$P1|" "the command as words, kept open after it ends"
   assert_contains "$log" "new-session|-d|-s|shop-two|" "the second"
   local -a left=($HOME/.local/state/axle/run/services/*(N))
   (( ${#left} )) && fail "--only: nothing in the background: $left"
@@ -751,7 +751,7 @@ test_run_says_when_the_server_is_up() {
   mkdir -p $T/site; print '<!doctype html>' > $T/site/index.html
   _axle_run_detect $T/site >/dev/null 2>&1
   functions[_axle_run_detect_orig]=$functions[_axle_run_detect]
-  _axle_run_detect() { _axle_run_detect_orig "$@" || return 1; _axle_run_cmd[-1]=$port; _axle_run_port=$port }
+  _axle_run_detect() { _axle_run_detect_orig "$@" || return 1; _axle_run_cmd=($_axle_run_cmd[1] $ROOT/tests/serve.py $port); _axle_run_port=$port }
   cd $T/site
   local out=$(axle run --yes </dev/null 2>&1)
   assert_contains "$out" "site" "names it"
