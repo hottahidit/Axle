@@ -160,13 +160,17 @@ _axle_cmd_doctor() {
 
 # `axle module [ls] | on <name> | off <name>` (also enable/disable), saved to the config.
 _axle_cmd_module() {
-  local -a all=(${${:-$AXLE_ROOT/modules/*.zsh(N)}:t:r})
+  local -a reply all
+  _axle_module_names; all=($reply)
   case ${1:-ls} in
     ls)
-      local name
+      local name line state
       for name in $all; do
-        local state='off'; (( ${AXLE_MODULES[(Ie)$name]} )) && state='on '
-        print -r -- "  $state  $name    ${${(M)${(f)"$(<$AXLE_ROOT/modules/$name.zsh)"}:#\#*}[1]#\# }"
+        state='off'; (( ${AXLE_MODULES[(Ie)$name]} )) && state='on '
+        # What it does: the file's first line, "# name: what it does".
+        line=''; IFS= read -r line < $AXLE_ROOT/modules/$name.zsh
+        line=${line#\# }; line=${line#$name: }
+        print -r -- "  $state  ${(r:10:)name} $line"
       done ;;
     on|off|enable|disable)
       local verb=${${${1/on/enable}/off/disable}}
@@ -181,7 +185,8 @@ _axle_cmd_module() {
       typeset -ga AXLE_MODULES=($mods); _axle_auto_modules=''
       print -r -- "axle: $2 ${verb}d (saved to ${AXLE_CONFIG/#$HOME/~})"
       [[ $verb == enable ]] && _axle_cmd_reload
-      [[ $verb == disable ]] && print -r -- "  open a new shell to unload it fully" ;;
+      [[ $verb == disable ]] && print -r -- "  open a new shell to unload it fully"
+      return 0 ;;
     *) print -u2 "usage: axle module [ls] | on <name> | off <name>"; return 1 ;;
   esac
 }

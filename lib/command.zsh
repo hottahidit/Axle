@@ -4,8 +4,10 @@
 #
 #   axle_command <name> <function> <group: general|theme|tool> <usage> <description>
 
-# Both parts source this file; the second time it's already loaded (except on reload).
-(( ${+_axle_cmd_fn} && ! ${_axle_reloading:-0} )) && return 0
+# Both parts source this file; the second time it's already loaded (except on reload). A
+# shell still running a version before lazy loading has no _axle_lazy: load this one over it
+# (its `axle reload` doesn't announce itself, and everything below needs that function).
+(( ${+_axle_cmd_fn} && ${+functions[_axle_lazy]} && ! ${_axle_reloading:-0} )) && return 0
 
 typeset -gA _axle_cmd_fn _axle_cmd_group _axle_cmd_usage _axle_cmd_desc
 typeset -g  AXLE_REPO=${AXLE_REPO:-https://github.com/hottahidit/axle}
@@ -17,6 +19,12 @@ axle_command() {
 
 zmodload zsh/datetime 2>/dev/null
 autoload -Uz add-zsh-hook
+
+# The tool's module names (reply): the glob expands first, then the names are cut from it.
+_axle_module_names() {
+  local -a files=($AXLE_ROOT/modules/*.zsh(N))
+  reply=(${files:t:r})
+}
 
 # Functions that load their file the first time they're called, so a shell only reads
 # what it uses (help pages, settings, completion, prompts, update, ...).

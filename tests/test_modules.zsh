@@ -124,6 +124,30 @@ test_upsearch_walks_matching_lines() {
   assert_eq "${(j:,:)rec}" "[push],[git push --force],[git push origin main],[git push origin main],[git push --force],[push],[true; : > $T/ready]" "the walk"
 }
 
+# From an empty line ↑ is the usual history all the way: what it brings up isn't a search.
+test_upsearch_from_an_empty_line_browses() {
+  _live || return 0
+  local -i _n=0
+  _key $'\e[A'                # the newest command
+  _key $'\e[A'                # and on, not a search for its text
+  _key $'\e[A'
+  _key $'\e[A'
+  _key $'\e[B'                # ↓ back the same way
+  _key $'\e[B'
+  _key $'\e[B'
+  _key $'\e[B'                # past the newest: empty again
+  _key $'\e[A\e[A\x15ls'      # edited: now it's what you typed
+  _key $'\e[A'                # so ↑ searches for it
+  zpty -w sh $'\x15exit'; zpty -d sh 2>/dev/null
+  local -a rec=("${(@f)$(<$T/rec)}")
+  local newest="[true; : > $T/ready]"
+  assert_eq "${(j:,:)rec[1,4]}" "$newest,[echo done],[git push --force],[ls -la]" "↑ walks the history"
+  assert_eq "${(j:,:)rec[5,7]}" "[git push --force],[echo done],$newest" "↓ walks back"
+  assert_eq "$rec[8]" "[]" "past the newest: empty"
+  assert_eq "$rec[9]" "[ls]" "edited"
+  assert_eq "$rec[10]" "[ls -la]" "a search for what was typed"
+}
+
 test_esc_esc_fixes_and_toggles_sudo() {
   _live || return 0
   local -i _n=0
@@ -136,4 +160,29 @@ test_esc_esc_fixes_and_toggles_sudo() {
   assert_eq "$rec[1]" '[git status]' "the fix"
   assert_eq "$rec[2]" '[sudo apt update]' "sudo added"
   assert_eq "$rec[3]" '[apt update]' "sudo removed"
+}
+
+# The list is Axle's modules, wherever you are (it once listed the current folder's files).
+test_module_list_is_the_modules() {
+  load_tool
+  mkdir -p $T/elsewhere/notes; : > $T/elsewhere/README.md; cd $T/elsewhere
+  local opt out
+  for opt in noglobsubst globsubst; do
+    setopt $opt
+    out=$(axle module 2>&1)
+    assert_contains "$out" "jump" "$opt: a module"
+    assert_match "$out" "*off  run * this project*" "$opt: and run, off, with what it does"
+    [[ $out == *README* || $out == *notes* || $out == *"no such file"* ]] && fail "$opt: not this folder's files: $out"
+  done
+  setopt noglobsubst
+  out=$(axle module on nosuch 2>&1) && fail "an unknown module"
+  assert_contains "$out" "no module 'nosuch'"
+  axle module on run > $T/out 2>&1 || fail "switching run on: $(<$T/out)"
+  assert_contains "$(<$T/out)" "run enabled"
+  assert_contains "$(<$AXLE_CONFIG)" "AXLE_MODULES=" "saved"
+  (( ${AXLE_MODULES[(Ie)run]} )) || fail "on now"
+  (( ${+_axle_cmd_fn[run]} )) || fail "axle run exists now"
+  out=$(AXLE_MODULES=(nosuch); source $ROOT/axle.plugin.zsh 2>&1)
+  assert_contains "$out" "no module 'nosuch' (available: " "the load-time message"
+  assert_contains "$out" "jump" "names the real ones"
 }

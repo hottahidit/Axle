@@ -80,3 +80,13 @@ test_compiles_to_bytecode() {
   out=$(cd $copy && HOME=$HOME zsh -fc 'source ./axle.plugin.zsh; source ./benzene.zsh-theme; axle version' 2>&1)
   assert_contains "$out" "the axle tool + Benzene" "loads from bytecode"
 }
+
+# A shell started before lazy loading existed reloads into this version: it has the command
+# table but no _axle_lazy, and its reload doesn't set _axle_reloading.
+test_reload_from_a_version_before_lazy_loading() {
+  typeset -gA _axle_cmd_fn=(old old)
+  axle_command() { _axle_cmd_fn[$1]=$2 }
+  local out=$(source $ROOT/axle.plugin.zsh 2>&1; (( $+functions[_axle_lazy] )) && print lazy-ok; _axle_env_find; print done)
+  assert_contains "$out" "lazy-ok" "the new code loads over the old"
+  assert_not_match "$out" "*command not found*" "with nothing missing"
+}

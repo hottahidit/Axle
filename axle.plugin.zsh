@@ -51,7 +51,8 @@ _axle_lazy lib/rank.zsh _axle_jump_load _axle_jump_rank
     if [[ -r $AXLE_ROOT/modules/$module.zsh ]]; then
       source "$AXLE_ROOT/modules/$module.zsh"
     else
-      print -u2 "axle: no module '$module' (available: ${${(@)${:-$AXLE_ROOT/modules/*.zsh(N)}:t:r}})"
+      local -a reply; _axle_module_names
+      print -u2 -r -- "axle: no module '$module' (available: $reply)"
     fi
   done
 }

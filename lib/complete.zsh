@@ -26,7 +26,8 @@ _axle_complete() {
       if (( CURRENT == 3 )); then
         _values action 'ls[list modules]' 'on[switch one on]' 'off[switch one off]'
       elif (( CURRENT == 4 )); then
-        local -a mods=(${${:-$AXLE_ROOT/modules/*.zsh(N)}:t:r})
+        _axle_module_names
+        local -a mods=($reply)
         [[ $words[3] == (off|disable) ]] && mods=(${mods:*AXLE_MODULES})
         [[ $words[3] == (on|enable) ]]   && mods=(${mods:|AXLE_MODULES})
         _describe -t modules module mods
@@ -124,7 +125,7 @@ _axle_complete() {
              int)      _message "a whole number (default ${reply[3]:-none})" ;;
              choice:*) local -a vals=(${(s:,:)reply[2]#choice:}); compadd -a vals ;;
              list)     case $words[4] in
-                         AXLE_MODULES) local -a v=(${${:-$AXLE_ROOT/modules/*.zsh(N)}:t:r}); compadd -a v ;;
+                         AXLE_MODULES) _axle_module_names; local -a v=($reply); compadd -a v ;;
                          AXLE_SUGGEST_STRATEGY) compadd smart history completion ;;
                          AXLE_NOX_*|AXLE_AXON_SHOW)
                            local -a v=(${${(M)${(k)functions}:#_axle_seg_*}#_axle_seg_}); compadd -a v ;;
