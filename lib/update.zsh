@@ -7,7 +7,11 @@ _axle_update_status() {
   (( behind )) || return 1
   local line
   for line in "${(@f)$($g show '@{u}:lib/command.zsh' 2>/dev/null)}"; do
-    [[ $line == 'typeset -g  AXLE_VERSION='* ]] && { REPLY=${line#*=}; return 0 }
+    if [[ $line == 'typeset -g  AXLE_VERSION='* ]]; then
+      REPLY=${line#*=}
+      [[ $REPLY == $AXLE_VERSION ]] && REPLY="$AXLE_VERSION + $behind new commit(s)"   # the compat changed
+      return 0
+    fi
   done
   REPLY="$behind new commits"
 }
@@ -62,10 +66,12 @@ _axle_cmd_update() {
   else
     _axle_compile
     _axle_cmd_reload
-    print -r -- "updated: $was → $AXLE_VERSION"
+    if [[ $was == $AXLE_VERSION ]]; then print -r -- "updated (still $AXLE_VERSION)"
+    else print -r -- "updated: $was → $AXLE_VERSION"; fi
     local changes=$(AXLE_VERSION=$was _axle_update_changes HEAD)
     if [[ -n $changes ]]; then print -r -- $changes
     else command git -C $AXLE_ROOT log --oneline --no-decorate $before..$after | sed 's/^/  /'; fi
+    mkdir -p ${_axle_update_cache:h} 2>/dev/null
     print -r -- "$EPOCHSECONDS" >| $_axle_update_cache 2>/dev/null
   fi
 }

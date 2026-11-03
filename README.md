@@ -1,5 +1,11 @@
 # Axle
 
+> **Why this branch exists:** [MnemoCetus](https://github.com/hottahidit/MnemoCetus) is a separate
+> project that scans your projects, and it works well alongside Axle. Rather than fold it into Axle,
+> this long-lived branch keeps following `main` and adds what connects the two: the `axle nemc`
+> command and MnemoCetus's state in the Benzene prompt. `install.sh` moves you here if you choose
+> MnemoCetus during setup. Without MnemoCetus, this branch behaves like `main`.
+
 **Axle** is a toolkit for zsh: smart suggestions as you type, `j` to jump to the folder you mean,
 a Ctrl-R history picker, automatic virtualenvs, command stats, a health check, and hooks and
 "drops" to build your own. It comes with **Benzene**, a prompt theme whose two variants, NoxA and
@@ -60,10 +66,10 @@ Plugin managers: `zinit light hottahidit/axle` or antidote's `hottahidit/axle` l
 only the prompt, name its file: `zinit ice pick"benzene.zsh-theme"; zinit light hottahidit/axle`, or
 antidote's `hottahidit/axle path:benzene.zsh-theme`.
 
-**MnemoCetus** (optional, asked first; `--nemc`, `--no-nemc`): [MnemoCetus](https://github.com/hottahidit/MnemoCetus)
+**MnemoCetus** (experimental, optional, asked first; `--nemc`, `--no-nemc`): [MnemoCetus](https://github.com/hottahidit/MnemoCetus)
 is a separate project that scans your projects. Choosing it installs `nemc` (with uv or pipx) and
 moves this checkout to Axle's `MnemoCetus` branch, which `axle update` then follows. That adds
-`axle nemc` and the folder's state in the Benzene prompt (`axle help nemc`).
+`axle nemc` and the folder's state in the Benzene prompt.
 
 `ZSH_THEME="axle"` (the old name) still works and loads whatever is installed. `axle doctor`
 checks the setup; `axle update` updates.

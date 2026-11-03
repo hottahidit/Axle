@@ -1,5 +1,10 @@
 # Changelog
 
+## nemc compat 0.1.1 (branch `MnemoCetus`)
+
+- A compat-only update now says so, instead of "axle 0.2.3 is out (you have 0.2.3)".
+- The README opens with why this branch exists.
+
 ## nemc compat 0.1.0 (branch `MnemoCetus`)
 
 Axle's long-lived branch for working with MnemoCetus (a separate project). It follows `main`

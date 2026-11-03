@@ -15,7 +15,7 @@
 # What this relies on from nemc 1.0+: `status --json --budget` (fields state, findings) and
 # the hook name __nemc_precmd. AXLE_NEMC=0 turns all of it off.
 
-typeset -g  AXLE_NEMC_COMPAT=0.1.0
+typeset -g  AXLE_NEMC_COMPAT=0.1.1
 : ${AXLE_NEMC:=1} ${AXLE_NEMC_TTL:=60}
 typeset -gA _axle_nemc_state _axle_nemc_age     # folder -> "state:findings" / when it was read
 typeset -g  _axle_nemc_fd=''

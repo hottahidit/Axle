@@ -49,13 +49,13 @@ if [[ -z $want_nemc ]]; then
   if [[ -t 0 ]]; then
     print "MnemoCetus (nemc) scans your projects: what's there, what's changed, leaked secrets,"
     print "disk to reclaim. With it, Axle gains \`axle nemc\` and its state in the Benzene prompt."
-    print -n "Install MnemoCetus too? [y/N] "
+    print -n "Install MnemoCetus too? It's experimental. [y/N] "
     read -r answer && [[ $answer == [yY]* ]] && want_nemc=1
     print
   fi
 fi
 
-if (( want_nemc )) && (( ! $+commands[nemc] )); then
+if (( want_nemc )) && (( ! $+commands[nemc] )) && [[ -z ${AXLE_NEMC_INSTALLED:-} ]]; then
   if (( $+commands[uv] )); then
     command uv tool install "git+$nemc_repo" || want_nemc=0
   elif (( $+commands[pipx] )); then
@@ -70,15 +70,15 @@ if (( want_nemc )) && (( ! $+commands[nemc] )); then
 fi
 
 if (( want_nemc )); then
-  branch=$(command git -C $repo symbolic-ref --short -q HEAD)
+  branch=$(command git -C $repo symbolic-ref --short -q HEAD 2>/dev/null)
   if ! command git -C $repo rev-parse --git-dir >/dev/null 2>&1; then
     print -u2 "install.sh: this copy of Axle isn't a git clone, so it can't move to the MnemoCetus branch."
-    print -u2 "  Clone $nemc_repo:h/axle and run ./install.sh --nemc there."
+    print -u2 "  Clone https://github.com/hottahidit/Axle and run ./install.sh --nemc there."
+  elif [[ -z $branch ]]; then
+    print -u2 "install.sh: not on a branch, so not moving to the MnemoCetus branch."
   elif [[ $branch != MnemoCetus ]]; then
     remote=$(command git -C $repo config "branch.$branch.remote"); remote=${remote:-origin}
-    if [[ -z $branch ]]; then
-      print -u2 "install.sh: not on a branch, so not moving to the MnemoCetus branch."
-    elif [[ -n $(command git -C $repo status --porcelain --untracked-files=no) ]]; then
+    if [[ -n $(command git -C $repo status --porcelain --untracked-files=no) ]]; then
       print -u2 "install.sh: this checkout has uncommitted changes, so it stays on $branch."
       print -u2 "  Commit or stash them, then run ./install.sh --nemc again."
     elif ! command git -C $repo fetch --quiet $remote "+refs/heads/MnemoCetus:refs/remotes/$remote/MnemoCetus"; then
@@ -91,6 +91,7 @@ if (( want_nemc )); then
       fi && {
         print "Axle is now on its MnemoCetus branch."
         # That branch's own installer takes over (before this file is read any further).
+        export AXLE_NEMC_INSTALLED=1      # (it may not be on PATH yet: don't install it twice)
         exec zsh -f $repo/install.sh $args --nemc
       }
     fi
@@ -227,9 +228,14 @@ elif (( want_theme )); then
 fi
 if (( want_nemc && $+commands[nemc] )); then
   print
-  print "For nemc's tab completion, add to ~/.zshrc:"
-  if (( want_theme )); then print '  eval "$(nemc init zsh --no-prompt)"     # Benzene shows its state'
-  else print '  eval "$(nemc init zsh)"'; fi
+  # Only the MnemoCetus branch shows nemc's state in Benzene; anywhere else nemc keeps its light.
+  if (( want_theme )) && [[ -r $repo/lib/nemc.zsh ]]; then
+    print "For nemc's tab completion, add to ~/.zshrc:"
+    print '  eval "$(nemc init zsh --no-prompt)"     # Benzene shows its state'
+  else
+    print "For nemc's status light and tab completion, add to ~/.zshrc:"
+    print '  eval "$(nemc init zsh)"'
+  fi
 elif (( want_nemc )); then
   print
   print "nemc is installed but isn't on PATH yet (uv and pipx use ~/.local/bin)."
