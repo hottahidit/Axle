@@ -66,6 +66,7 @@ _axle_cmd_update() {
     local changes=$(AXLE_VERSION=$was _axle_update_changes HEAD)
     if [[ -n $changes ]]; then print -r -- $changes
     else command git -C $AXLE_ROOT log --oneline --no-decorate $before..$after | sed 's/^/  /'; fi
+    mkdir -p ${_axle_update_cache:h} 2>/dev/null
     print -r -- "$EPOCHSECONDS" >| $_axle_update_cache 2>/dev/null
   fi
 }

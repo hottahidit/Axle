@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.4
+
+- Experimental: `install.sh` asks about MnemoCetus first (`--nemc`, `--no-nemc`). Choosing it installs `nemc`
+  with uv or pipx and moves the checkout to Axle's `MnemoCetus` branch, which adds `axle nemc`
+  and the folder's state in the Benzene prompt. `axle update` then follows that branch.
+
 ## 0.2.3
 
 - Tests: the `fix` test no longer expects a case correction on case-insensitive disks

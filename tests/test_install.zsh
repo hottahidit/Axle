@@ -52,3 +52,22 @@ test_plain_copy_deletes_with_yes() {
   _install $T/c --theme --yes >/dev/null
   [[ ! -e $T/c/core && -e $T/c/benzene.zsh-theme ]] || fail "tool files deleted, theme kept"
 }
+
+test_nemc_moves_to_its_branch() {
+  mkdir -p $T/omz/custom $T/bin
+  _clone $T/c
+  command git -C $T/src branch MnemoCetus
+  print -r -- $'#!/bin/sh\nprintf \'#!/bin/sh\\n\' > '"$T"$'/bin/nemc\nchmod +x '"$T"$'/bin/nemc' > $T/bin/uv
+  chmod +x $T/bin/uv
+  (cd $T/c && PATH=$T/bin:$PATH ZSH=$T/omz ZSH_CUSTOM=$T/omz/custom zsh -f ./install.sh --nemc --both --no-configure) >/dev/null 2>&1
+  assert_eq "$(command git -C $T/c symbolic-ref --short HEAD)" MnemoCetus "on the MnemoCetus branch"
+  assert_eq "$(command git -C $T/c rev-parse --abbrev-ref '@{u}')" origin/MnemoCetus "axle update follows it"
+}
+
+test_no_nemc_stays_on_this_branch() {
+  mkdir -p $T/omz/custom
+  _clone $T/c
+  command git -C $T/src branch MnemoCetus
+  _install $T/c --no-nemc --both >/dev/null
+  assert_eq "$(command git -C $T/c symbolic-ref --short HEAD)" main "still on main"
+}
