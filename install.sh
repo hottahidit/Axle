@@ -7,6 +7,8 @@
 #             --yes             don't ask before removing the unused part (non-git copies)
 #             --keep            keep the unused part's files
 #             --no-configure    don't start `axle configure` afterwards
+#             --nemc            also install MnemoCetus, and move to Axle's MnemoCetus branch
+#             --no-nemc         don't ask about MnemoCetus
 #
 # With oh-my-zsh it links what you chose into $ZSH_CUSTOM; otherwise it prints the lines for
 # ~/.zshrc. It never edits ~/.zshrc. If you choose only one part, the other's files are
@@ -19,7 +21,9 @@ setopt no_nomatch
 repo="${0:A:h}"
 omz="${ZSH:-$HOME/.oh-my-zsh}"
 custom="${ZSH_CUSTOM:-$omz/custom}"
-choice='' plain=0 yes=0 keep=0 configure=1
+choice='' plain=0 yes=0 keep=0 configure=1 want_nemc=''
+nemc_repo=https://github.com/hottahidit/MnemoCetus
+args=("$@")
 
 for arg in "$@"; do
   case $arg in
@@ -28,10 +32,70 @@ for arg in "$@"; do
     --yes)          yes=1 ;;
     --keep)         keep=1 ;;
     --no-configure) configure=0 ;;
-    -h|--help)      sed -n '2,17s/^# \{0,1\}//p' $0; exit 0 ;;
+    --nemc)         want_nemc=1 ;;
+    --no-nemc)      want_nemc=0 ;;
+    -h|--help)      sed -n '2,19s/^# \{0,1\}//p' $0; exit 0 ;;
     *)              print -u2 "install.sh: unknown option $arg (see --help)"; exit 2 ;;
   esac
 done
+
+# --- MnemoCetus ------------------------------------------------------------------------
+#
+# A separate project that pairs with Axle. Choosing it installs nemc and moves this checkout
+# to Axle's `MnemoCetus` branch (main + the compat); `axle update` then follows that branch.
+
+if [[ -z $want_nemc ]]; then
+  want_nemc=0
+  if [[ -t 0 ]]; then
+    print "MnemoCetus (nemc) scans your projects: what's there, what's changed, leaked secrets,"
+    print "disk to reclaim. With it, Axle gains \`axle nemc\` and its state in the Benzene prompt."
+    print -n "Install MnemoCetus too? [y/N] "
+    read -r answer && [[ $answer == [yY]* ]] && want_nemc=1
+    print
+  fi
+fi
+
+if (( want_nemc )) && (( ! $+commands[nemc] )); then
+  if (( $+commands[uv] )); then
+    command uv tool install "git+$nemc_repo" || want_nemc=0
+  elif (( $+commands[pipx] )); then
+    command pipx install "git+$nemc_repo" || want_nemc=0
+  else
+    print -u2 "install.sh: MnemoCetus needs uv or pipx to install; carrying on without it."
+    print -u2 "  Install one of them, then run ./install.sh --nemc again."
+    want_nemc=0
+  fi
+  (( want_nemc )) || print -u2 "install.sh: MnemoCetus wasn't installed; Axle stays on this branch."
+  rehash
+fi
+
+if (( want_nemc )); then
+  branch=$(command git -C $repo symbolic-ref --short -q HEAD)
+  if ! command git -C $repo rev-parse --git-dir >/dev/null 2>&1; then
+    print -u2 "install.sh: this copy of Axle isn't a git clone, so it can't move to the MnemoCetus branch."
+    print -u2 "  Clone $nemc_repo:h/axle and run ./install.sh --nemc there."
+  elif [[ $branch != MnemoCetus ]]; then
+    remote=$(command git -C $repo config "branch.$branch.remote"); remote=${remote:-origin}
+    if [[ -z $branch ]]; then
+      print -u2 "install.sh: not on a branch, so not moving to the MnemoCetus branch."
+    elif [[ -n $(command git -C $repo status --porcelain --untracked-files=no) ]]; then
+      print -u2 "install.sh: this checkout has uncommitted changes, so it stays on $branch."
+      print -u2 "  Commit or stash them, then run ./install.sh --nemc again."
+    elif ! command git -C $repo fetch --quiet $remote "+refs/heads/MnemoCetus:refs/remotes/$remote/MnemoCetus"; then
+      print -u2 "install.sh: couldn't fetch Axle's MnemoCetus branch, so it stays on $branch."
+    else
+      if command git -C $repo rev-parse --verify -q refs/heads/MnemoCetus >/dev/null; then
+        command git -C $repo switch --quiet MnemoCetus
+      else
+        command git -C $repo switch --quiet --track -c MnemoCetus $remote/MnemoCetus
+      fi && {
+        print "Axle is now on its MnemoCetus branch."
+        # That branch's own installer takes over (before this file is read any further).
+        exec zsh -f $repo/install.sh $args --nemc
+      }
+    fi
+  fi
+fi
 
 # --- what to install ---------------------------------------------------------------
 
@@ -160,6 +224,15 @@ if (( want_tool && configure )); then
 elif (( want_theme )); then
   print
   print 'Open a new shell, then try `axle configure` and `axle preview`.'
+fi
+if (( want_nemc && $+commands[nemc] )); then
+  print
+  print "For nemc's tab completion, add to ~/.zshrc:"
+  if (( want_theme )); then print '  eval "$(nemc init zsh --no-prompt)"     # Benzene shows its state'
+  else print '  eval "$(nemc init zsh)"'; fi
+elif (( want_nemc )); then
+  print
+  print "nemc is installed but isn't on PATH yet (uv and pipx use ~/.local/bin)."
 fi
 print
 print 'Then open a new shell. `axle doctor` checks the setup.'

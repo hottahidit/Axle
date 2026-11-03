@@ -1,0 +1,41 @@
+# The `MnemoCetus` branch: Axle × MnemoCetus
+
+MnemoCetus stays a separate project. This long-lived branch is Axle's compat with it: `main`
+plus whatever makes the two work together. It's never merged back into `main`.
+
+The folder is `~/repos/axle-nemc`; the branch is `MnemoCetus`, locally and on GitHub.
+
+## Rules
+
+1. **Follows `main` by merging, never rebasing.** Users' `axle update` is `git pull --ff-only`,
+   so a rewritten branch would break it. Merge `main` in after each `main` release.
+2. **Inert without nemc.** Everything checks for nemc when it's used, so a user who removes it
+   has a plain Axle.
+3. **Small surface in shared files.** New code goes in `lib/nemc*.zsh`, which both the tool and
+   the theme load, and which a one-part install keeps. Existing files get one-line calls, so
+   merges from `main` stay clean. New `main` releases must not need nemc changes to pass tests.
+4. **The prompt never waits on nemc.** It reads from memory; Python runs in the background.
+5. **Axle adapts to nemc, through a small contract:** `status --json --budget` (`state`,
+   `findings`), `--version`, and the hook name `__nemc_precmd`. Changing these in MnemoCetus
+   means changing this branch. Doctor checks the version.
+
+`main`'s `install.sh` carries the same MnemoCetus question, since that's where users start.
+Port it with `git checkout MnemoCetus -- install.sh` when it changes.
+
+## Versions
+
+Commits are `(MnemoCetus)vX.Y.Z - Title`, numbered by the branch's own progress (`AXLE_NEMC_COMPAT`).
+`AXLE_VERSION` stays `main`'s, so update notices keep making sense.
+
+## Done
+
+- **v0.1:** `axle nemc`, the Benzene segment, stand-down of nemc's light, the install choice,
+  doctor, settings.
+
+## Ideas
+
+- A drop while a scan runs, and on new findings after `nemc rescan`.
+- `j` and `axle run` (once Legionary lands on `main`) using nemc's project list and categories.
+- The wizard: offer the segment and show its states in `axle preview`.
+- `axle stats` beside nemc's project data: where you work against what's bloated or stale.
+- A `nemc status --porcelain` in MnemoCetus, for a contract that isn't JSON by regex.

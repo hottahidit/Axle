@@ -38,6 +38,7 @@ _axle_load_variant() {
   source "$AXLE_ROOT/benzene/$variant.zsh"
   source "$AXLE_ROOT/benzene/segments.zsh"       # your segments + drops
   source "$AXLE_ROOT/benzene/aistatus.zsh"       # AI status dots (expanded view)
+  _axle_nemc_attach                              # MnemoCetus's state
   typeset -g AXLE_VARIANT="$variant"
 }
 

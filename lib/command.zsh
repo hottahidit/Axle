@@ -182,6 +182,8 @@ _axle_lazy lib/help.zsh     _axle_help_one _axle_did_you_mean _axle_distance
 _axle_lazy lib/settings.zsh _axle_cmd_config _axle_setting _axle_config_value _axle_config_write
 _axle_lazy lib/complete.zsh _axle_complete
 
+source "$AXLE_ROOT/lib/nemc.zsh"              # the compat with MnemoCetus
+
 # --- compiled files ---------------------------------------------------------------
 
 # zsh reads a file's precompiled bytecode (file.zwc) instead of the text when the .zwc is

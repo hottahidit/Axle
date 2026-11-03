@@ -106,6 +106,7 @@ _axle_cmd_doctor() {
     _dr warn "zsh-autosuggestions is loaded" "axle's suggest module steps aside for it; remove one of them"
   [[ -n $POWERLEVEL9K_MODE$STARSHIP_SHELL ]] &&
     _dr warn "another prompt (powerlevel10k/starship) is active" "it may fight Benzene for the prompt"
+  _axle_nemc_doctor
   # terminal
   if [[ $COLORTERM == (truecolor|24bit) || -n $WT_SESSION || $TERM_PROGRAM == (vscode|iTerm.app|WezTerm|ghostty) ]]; then
     _dr ok "24-bit colour"

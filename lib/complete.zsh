@@ -79,6 +79,16 @@ _axle_complete() {
     uninstall)
       (( CURRENT == 3 )) && _values option '--yes[links and cache, no questions]' \
         '--purge[also settings and history, no questions]' ;;
+    nemc)
+      if (( CURRENT == 3 )); then
+        _values command 'status[is this project up to date?]' 'scan[scan a folder and save it]' \
+          'rescan[re-scan the saved folders]' 'changes[what changed since the last save]' \
+          'projects[list saved projects]' 'secrets[stored security findings]' \
+          'audit[dependency vulnerabilities]' 'reclaim[regenerable bloat to delete]' \
+          'serve[the web dashboard]' 'db[the long-term database]'
+      else
+        _files
+      fi ;;
     jump)
       if (( $+functions[_axle_jump_complete] )); then
         shift words; (( CURRENT-- ))

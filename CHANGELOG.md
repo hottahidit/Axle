@@ -1,5 +1,18 @@
 # Changelog
 
+## nemc compat 0.1.0 (branch `MnemoCetus`)
+
+Axle's long-lived branch for working with MnemoCetus (a separate project). It follows `main`
+and adds (plan: `docs/nemc/ROADMAP.md`):
+
+- `axle nemc [command]`: nemc as a tool of axle, with help and Tab completion.
+- A Benzene segment with this folder's state: a red bubble with the number of findings (also
+  in AxoN), an amber dot if it changed since the last scan, a green dot when expanded. It's
+  read in the background, so the prompt never waits on nemc. nemc's own light stands down.
+- `install.sh` asks about MnemoCetus first (`--nemc`, `--no-nemc`): it installs nemc with uv or
+  pipx and moves the checkout to this branch, which `axle update` then follows.
+- `axle doctor` reports it. `AXLE_NEMC=0` turns it off; `AXLE_NEMC_TTL` sets how often it reads.
+
 ## 0.2.3
 
 - Tests: the `fix` test no longer expects a case correction on case-insensitive disks

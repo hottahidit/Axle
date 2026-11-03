@@ -15,6 +15,8 @@
 typeset -gA _axle_settings=(
   # both parts
   AXLE_UPDATE_CHECK     'general|bool|1|check for a new version once a day (in the background)'
+  AXLE_NEMC             'general|bool|1|MnemoCetus in the prompt, when nemc is installed'
+  AXLE_NEMC_TTL         'general|int|60|seconds between reading the state of the folder from nemc'
   # the prompt
   AXLE_VARIANT          'theme|choice:nox,axon|nox|which prompt: NoxA (two lines) or AxoN (one line)'
   AXLE_NERD_FONT        'theme|bool|0|Nerd Font icons instead of plain text'

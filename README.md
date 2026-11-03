@@ -60,6 +60,11 @@ Plugin managers: `zinit light hottahidit/axle` or antidote's `hottahidit/axle` l
 only the prompt, name its file: `zinit ice pick"benzene.zsh-theme"; zinit light hottahidit/axle`, or
 antidote's `hottahidit/axle path:benzene.zsh-theme`.
 
+**MnemoCetus** (optional, asked first; `--nemc`, `--no-nemc`): [MnemoCetus](https://github.com/hottahidit/MnemoCetus)
+is a separate project that scans your projects. Choosing it installs `nemc` (with uv or pipx) and
+moves this checkout to Axle's `MnemoCetus` branch, which `axle update` then follows. That adds
+`axle nemc` and the folder's state in the Benzene prompt (`axle help nemc`).
+
 `ZSH_THEME="axle"` (the old name) still works and loads whatever is installed. `axle doctor`
 checks the setup; `axle update` updates.
 
