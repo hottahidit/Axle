@@ -148,6 +148,51 @@ test_upsearch_from_an_empty_line_browses() {
   assert_eq "$rec[10]" "[ls -la]" "a search for what was typed"
 }
 
+# Longer walks: where bugs hide is the second and third press, not the first.
+test_upsearch_key_sequences() {
+  _live || return 0
+  local -i _n=0
+  local newest="[true; : > $T/ready]"
+  repeat 7 _key $'\e[A'            # ↑ to the oldest (the setup line), and once more: stays
+  _key $'\x15'                     # cleared
+  _key 'push'                      # a search, back and forth
+  _key $'\e[A'; _key $'\e[A'; _key $'\e[B'; _key $'\e[A'
+  zpty -w sh $'\x15exit'; zpty -d sh 2>/dev/null
+  local -a rec=("${(@f)$(<$T/rec)}")
+  assert_eq "${(j:,:)rec[1,5]}" "$newest,[echo done],[git push --force],[ls -la],[git push origin main]" "↑ walks back"
+  assert_eq "$rec[7]" "$rec[6]" "at the oldest it stays"
+  assert_eq "${(j:,:)rec[10,13]}" "[git push --force],[git push origin main],[git push --force],[git push origin main]" "a search, back and forth"
+}
+
+# A command run from the walk: the next prompt starts over.
+test_upsearch_after_running_a_recalled_line() {
+  _live || return 0
+  local -i _n=0
+  zpty -n -w sh $'\e[A'; sleep 0.15; zpty -n -w sh $'\e[A'; sleep 0.15; zpty -n -w sh $'\r'; sleep 0.3
+  _key $'\e[A'                     # the command just run
+  _key $'\e[A'                     # still browsing, not searching for it
+  zpty -w sh $'\x15exit'; zpty -d sh 2>/dev/null
+  local -a rec=("${(@f)$(<$T/rec)}")
+  assert_eq "$rec[1]" "[echo done]" "what just ran"
+  assert_eq "$rec[2]" "[true; : > $T/ready]" "and on through the history"
+}
+
+# A multi-line command on the way: ↑ moves inside it, then on to older ones.
+test_upsearch_through_a_multi_line_command() {
+  _live || return 0
+  local -i _n=0
+  zpty -w sh " print -s \$'first line\\nsecond line'"
+  zpty -w sh "true; : > $T/ready2"; _wait $T/ready2
+  _key $'\e[A'                     # true...
+  _key $'\e[A'; (( _n++ ))          # the multi-line one, cursor at its end (two log lines)
+  _key $'\e[A'; (( _n++ ))          # up inside it
+  _key $'\e[A'                     # on to an older one
+  zpty -w sh $'\x15exit'; zpty -d sh 2>/dev/null
+  local -a rec=("${(@f)$(<$T/rec)}")
+  assert_contains "${(j:,:)rec}" "first line" "reaches it"
+  assert_contains "$rec[-1]" "true; : >" "and leaves it for an older command"
+}
+
 test_esc_esc_fixes_and_toggles_sudo() {
   _live || return 0
   local -i _n=0

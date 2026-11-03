@@ -207,6 +207,7 @@ Each milestone ends with its tests passing (Linux + macOS CI) and is usable on i
 - **Done when:** it redraws without flicker at 1 Hz and costs under 1% CPU.
 
 ### Merge (→ `main`)
+- Remove the branch note at the top of the README.
 - README section, CHANGELOG, help pages, Tab completion for every subcommand.
 - Wizard: `run` offered (on by default), with its main settings.
 - Security review of everything that executes or reads repository files.

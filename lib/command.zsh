@@ -5,9 +5,10 @@
 #   axle_command <name> <function> <group: general|theme|tool> <usage> <description>
 
 # Both parts source this file; the second time it's already loaded (except on reload). A
-# shell still running a version before lazy loading has no _axle_lazy: load this one over it
-# (its `axle reload` doesn't announce itself, and everything below needs that function).
-(( ${+_axle_cmd_fn} && ${+functions[_axle_lazy]} && ! ${_axle_reloading:-0} )) && return 0
+# shell still running a version before lazy loading has no _axle_lazy, and its `axle reload`
+# doesn't announce itself: that's a reload too, so its old functions get replaced as well.
+(( ${+_axle_cmd_fn} && ! ${+functions[_axle_lazy]} )) && typeset -gi _axle_reloading=1
+(( ${+_axle_cmd_fn} && ! ${_axle_reloading:-0} )) && return 0
 
 typeset -gA _axle_cmd_fn _axle_cmd_group _axle_cmd_usage _axle_cmd_desc
 typeset -g  AXLE_REPO=${AXLE_REPO:-https://github.com/hottahidit/axle}
@@ -43,6 +44,7 @@ _axle_lazy_load() {
 }
 
 axle() {
+  setopt localoptions noglobsubst      # (Axle's code expects zsh's default; yours comes back)
   local sub=${1:-help}
   if [[ $sub == (help|-h|--help) ]]; then
     if [[ -n $2 ]]; then _axle_help_one $2; else _axle_help; fi

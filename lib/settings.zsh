@@ -152,7 +152,7 @@ _axle_config_list() {
       kind=$reply[2] def=$reply[3] desc=$reply[4]
       _axle_config_value $name; value=$REPLY
       if (( ${+saved[$name]} )); then src="%F{$a}saved%f"
-      elif [[ $kind != list && -n $value && $value != $def ]]; then src="%F{$m}~/.zshrc%f"
+      elif [[ $kind != list && -n $value && $value != "$def" ]]; then src="%F{$m}~/.zshrc%f"
       else src="%F{$m}default%f"; fi
       (( ${#value} > 34 )) && value="${value[1,33]}…"
       [[ -n $value ]] || value='–'

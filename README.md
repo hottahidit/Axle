@@ -1,3 +1,29 @@
+> ## This is the `legionary` branch
+>
+> **This branch is where `axle run` is being built.** `axle run` is a smart run command: it works
+> out how to run the project you're in, or takes you back to the last one you worked on. Servers
+> run in the background and show in the prompt (`⚡ shop-api :8000`, red if they crash); scripts
+> and CLIs run in the foreground. It grew from Legionary, an earlier idea for a project launcher,
+> which is where the branch gets its name. The feature itself is called `axle run`.
+>
+> **It's a work in progress, and `run` is off by default here.** Finding and running projects,
+> background services, ports, and projects with several parts are built and being tested. Per-project
+> settings, crash diagnosis and a live monitor are planned. `axle run` isn't described in the rest
+> of this README yet, and the plan is in [docs/legionary/ROADMAP.md](docs/legionary/ROADMAP.md).
+>
+> **To try it,** on this branch:
+>
+> ```zsh
+> axle module on run    # then open a new terminal, or: axle reload
+> axle run --dry-run    # what would run, and why; runs nothing
+> axle run              # asks before a project's command runs the first time
+> axle run ls           # what's running (also: stop, restart, logs, open)
+> axle help run         # everything else
+> ```
+>
+> The stable version is on [`main`](https://github.com/hottahidit/axle/tree/main). This branch is
+> planned to merge there as `v0.3.0 - axle run`, and this note goes away then.
+
 # Axle
 
 **Axle** is a toolkit for zsh: smart suggestions as you type, `j` to jump to the folder you mean,

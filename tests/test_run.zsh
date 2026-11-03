@@ -799,3 +799,57 @@ test_run_foreground_gets_env_file_and_port() {
   assert_contains "$out" "GREET=hello PORT=" ".env in the foreground"
   [[ $out == *"PORT=5"* ]] || [[ $out == *"PORT="[0-9]* ]] || fail "and its port: $out"
 }
+
+# --- with the real tools, and judged by what you read -----------------------------------
+
+# A real Node server, through detection, .env and the whole cycle. Skipped without node.
+test_run_real_node_server_full_cycle() {
+  AXLE_MODULES=(run) load_tool
+  whence -p node >/dev/null && whence -p npm >/dev/null || return 0
+  local REPLY port; free_port; port=$REPLY
+  mkdir -p $T/api; cd $T/api
+  print '{"name": "api", "scripts": {"start": "node server.js"}, "dependencies": {"express": "^4"}}' > package.json
+  print "PORT=$port" > .env
+  print -l 'const http = require("http"); const p = process.env.PORT;' \
+    'http.createServer((q, s) => s.end("hello")).listen(p, () => console.log("listening " + p));' > server.js
+  local out
+  out=$(axle run --yes </dev/null 2>&1) || fail "starts: $out"
+  assert_contains "$out" "running on http://localhost:$port" "says where it is"
+  out=$(axle run ls 2>&1); assert_match "$out" "*api*up*$port*http://localhost:$port*" "ls"
+  out=$(axle run </dev/null 2>&1); assert_contains "$out" "already running on http://localhost:$port" "a second run"
+  out=$(axle run logs 2>&1); assert_contains "$out" "listening $port" "its output"
+  out=$(axle run restart </dev/null 2>&1) || fail "restart: $out"
+  assert_contains "$out" "running on http://localhost:$port" "restart: the same command, the same port"
+  out=$(axle run stop 2>&1); assert_contains "$out" "stopped api"
+  _axle_run_port_up $port && fail "the port is free again"
+  assert_eq "$(axle run ls)" "nothing running" "nothing left"
+}
+
+# docker compose's whole cycle, with a stand-in docker that records what it's asked.
+test_run_compose_full_cycle() {
+  AXLE_MODULES=(run) load_tool
+  fixtures
+  mkdir -p $T/bin
+  print -l '#!/bin/sh' 'echo "$*" >> "$DOCKER_LOG"' 'case "$*" in *logs*) echo "compose log line" ;; esac' > $T/bin/docker
+  chmod +x $T/bin/docker
+  path=($T/bin $path); export DOCKER_LOG=$T/docker.log
+  cd $T/fx/compose-app
+  local out
+  out=$(axle run --yes </dev/null 2>&1) || fail "up: $out"
+  out=${out//$'\e'\[[0-9;]#m/}                  # (colours)
+  assert_contains "$out" "compose-app up (docker compose) on http://localhost:8080" "says it's up"
+  assert_contains "$(<$HOME/.cache/axle/drops/run-compose-app)" "text=compose-app :8080" "the tab"
+  out=$(axle run ls 2>&1); assert_match "$out" "*compose-app*compose*8080*" "ls"
+  out=$(axle run logs 2>&1); assert_contains "$out" "compose log line" "logs"
+  out=$(axle run restart 2>&1); assert_contains "$out" "restarted compose-app" "restart"
+  out=$(axle run stop 2>&1); assert_contains "$out" "stopped compose-app" "stop"
+  local log=$(<$DOCKER_LOG)
+  local f="compose -f compose.yaml"
+  assert_contains "$log" "$f up -d" "up"
+  assert_contains "$log" "$f logs --tail 200" "logs, in full"
+  assert_contains "$log" "$f restart" "restart, in full"
+  assert_contains "$log" "$f down" "down, in full"
+  assert_eq "$(axle run ls)" "nothing running" "nothing left"
+  [[ -e $HOME/.cache/axle/drops/run-compose-app ]] && fail "no tab left"
+  return 0
+}
