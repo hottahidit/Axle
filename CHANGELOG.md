@@ -17,6 +17,11 @@ and adds (plan: `docs/nemc/ROADMAP.md`):
 - `install.sh` asks about MnemoCetus first (`--nemc`, `--no-nemc`): it installs nemc with uv or
   pipx and moves the checkout to this branch, which `axle update` then follows.
 - `axle doctor` reports it. `AXLE_NEMC=0` turns it off; `AXLE_NEMC_TTL` sets how often it reads.
+## 0.2.4
+
+- Experimental: `install.sh` asks about MnemoCetus first (`--nemc`, `--no-nemc`). Choosing it installs `nemc`
+  with uv or pipx and moves the checkout to Axle's `MnemoCetus` branch, which adds `axle nemc`
+  and the folder's state in the Benzene prompt. `axle update` then follows that branch.
 
 ## 0.2.3
 

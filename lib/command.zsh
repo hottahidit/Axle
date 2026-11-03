@@ -9,7 +9,7 @@
 
 typeset -gA _axle_cmd_fn _axle_cmd_group _axle_cmd_usage _axle_cmd_desc
 typeset -g  AXLE_REPO=${AXLE_REPO:-https://github.com/hottahidit/axle}
-typeset -g  AXLE_VERSION=0.2.3
+typeset -g  AXLE_VERSION=0.2.4
 
 axle_command() {
   _axle_cmd_fn[$1]=$2 _axle_cmd_group[$1]=$3 _axle_cmd_usage[$1]=$4 _axle_cmd_desc[$1]=$5
