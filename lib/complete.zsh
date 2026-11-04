@@ -5,6 +5,7 @@
 (( ${+_axle_settings} )) || source "$AXLE_ROOT/lib/settings.zsh"
 
 _axle_complete() {
+  setopt localoptions extendedglob
   local -a subs reply
   local name
   for name in ${(ok)_axle_cmd_fn}; do subs+=("$name:${_axle_cmd_desc[$name]//:/\\:}"); done

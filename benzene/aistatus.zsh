@@ -109,6 +109,7 @@ _axle_ai_parse() {
 
 # Check one service and write its cache file: "state<TAB>description".
 _axle_ai_check() {
+  setopt localoptions extendedglob
   local name=$1 kind=$2 url=$3 body extra=${3#*\#} base=${3%%\#*}
   local -a reply
   case $kind in

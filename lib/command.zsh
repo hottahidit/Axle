@@ -44,7 +44,8 @@ _axle_lazy_load() {
 }
 
 axle() {
-  setopt localoptions noglobsubst      # (Axle's code expects zsh's default; yours comes back)
+  # Axle's code needs these whatever your shell has set; yours come back afterwards.
+  setopt localoptions noglobsubst extendedglob
   local sub=${1:-help}
   if [[ $sub == (help|-h|--help) ]]; then
     if [[ -n $2 ]]; then _axle_help_one $2; else _axle_help; fi

@@ -4,6 +4,14 @@
 
 `axle run`: run this project, or go back to the last one (plan: `docs/legionary/ROADMAP.md`).
 
+Fixed for everyone:
+- Drops only worked with `extendedglob` on: under zsh's defaults the prompt showed their raw
+  `text=...` line, with no icon, colour or link, and they never expired.
+- `axle module` listed the current folder's files, and could refuse real modules.
+- ↑ from an empty line became a search for what it had just recalled.
+- `axle config` and others failed with `setopt globsubst`.
+- `axle reload` left a shell broken when it started on a version before lazy loading.
+
 - New module **run** (off by default while in progress; `axle module on run`):
   - Which project: the one you name (`axle run shop`, ranked by where you work, like `j`),
     a path you give, the one you're in, or else the last one you worked in (from the
@@ -15,7 +23,12 @@
     actix-web, Rocket, warp as servers), Go (gin, echo, fiber, chi, `ListenAndServe`), and
     a lone `index.html`. Ports from the code when written there.
   - Scripts and CLIs run in the foreground, in the project's root and its venv (never
-    `activate`).
+    `activate`). A venv can have any name (a folder with a `pyvenv.cfg`), and a part uses
+    the project's if it has none. If another venv is active, it asks which to use
+    (`AXLE_RUN_VENV`: `ask`, `project`, `active`), and says so when it's using one from
+    outside the project or a venv is broken.
+  - A Python file that starts its own server under `__main__` runs as it is, not through
+    `flask run` or uvicorn, so whatever it starts first still starts.
   - Servers run in the background, supervised (no daemon): their output goes to a log,
     `.env` is read as data (never sourced) and given to the process, and the prompt shows
     a tab: `⏳ name` while starting, `⚡ name :port` once the port answers (Ctrl+click

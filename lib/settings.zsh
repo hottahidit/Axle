@@ -78,6 +78,7 @@ typeset -gA _axle_settings=(
   AXLE_SEARCH_KEY       'tool|text|^R|key for the history picker'
   AXLE_SEARCH_ROWS      'tool|int|10|rows in the history picker'
   AXLE_ENV_QUIET        'tool|bool|0|switch venvs without saying so'
+  AXLE_RUN_VENV         'tool|choice:ask,project,active|ask|axle run, when another venv is active: ask, or use the project'"'"'s or the active one'
 )
 
 # The setting's fields: reply=(part kind default description).

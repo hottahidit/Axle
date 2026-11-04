@@ -99,6 +99,7 @@ First match wins; each gives a command, whether it's a **service** (background) 
 | `Procfile` (`web:` line) | that line | service | `$PORT` |
 | `package.json` script `dev`, else `start` | `npm/pnpm/yarn/bun run dev` (lockfile decides) | service if it's a known dev server (vite, next, nuxt, astro, express, nest, remix, svelte-kit), else task | 5173 / 3000 / 4321 / ... |
 | `manage.py` | `python manage.py runserver` | service | 8000 |
+| Python file starting its own server under `__main__` (`app.run(...)`, `uvicorn.run(...)`) | `python <file>` | service | `PORT` it reads, the code, else the default |
 | Python file importing FastAPI / Starlette | `uvicorn <module>:<app> --reload` | service | 8000 |
 | Python file importing Flask | `flask --app <file> run --debug` | service | 5000 |
 | Python file importing Streamlit / Gradio / Dash | `streamlit run <file>` / `python <file>` | service | 8501 / 7860 / 8050 |

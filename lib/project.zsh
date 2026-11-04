@@ -4,6 +4,7 @@
 # either part alone.
 
 (( ${+_axle_markers} )) || typeset -gA _axle_markers     # marker file -> directory it was found in
+zmodload -F zsh/stat b:zstat 2>/dev/null
 
 # The files that mark a project's root, for `_axle_project_root`, in order of preference
 # when several are in the same folder (the first one found is given as the reason).
@@ -12,11 +13,28 @@ typeset -ga _axle_root_markers=(.git pyproject.toml package.json Cargo.toml go.m
   docker-compose.yaml Procfile deno.json Gemfile pom.xml build.gradle build.gradle.kts
   composer.json mix.exs justfile Makefile)
 
-# A project's own venv directly in <dir> (REPLY=its path). Never runs anything in it.
+# A project's own venv directly in <dir> (REPLY=its path). Never runs anything in it. The
+# usual names first; then, in a folder that's a project, any folder holding a pyvenv.cfg (like
+# .espresso). Only in a project: a venv kept in ~/Projects isn't the venv of everything under
+# it. That looks inside every folder, so its answer is kept until <dir> changes: this runs at
+# every prompt.
+typeset -gA _axle_venv_seen
 _axle_venv_in() {
-  local -a hits=($1/(.venv|venv|env|.env)/pyvenv.cfg(N))
+  local -a hits=($1/(.venv|venv|env|.env)/pyvenv.cfg(N)) st
+  if (( ! ${#hits} )); then
+    zstat -A st +mtime -- $1 2>/dev/null || { REPLY=''; return 1 }
+    if [[ ${_axle_venv_seen[$1]%%:*} != $st[1] ]]; then
+      hits=()
+      local -a marks=($1/(${(j:|:)~${(@b)_axle_root_markers}})(N) $1/*.py(N))
+      (( ${#marks} )) && hits=($1/*/pyvenv.cfg(N) $1/.*/pyvenv.cfg(N))
+      _axle_venv_seen[$1]=$st[1]:
+      (( ${#hits} )) && _axle_venv_seen[$1]+=${hits[1]:h}
+    fi
+    REPLY=${_axle_venv_seen[$1]#*:}
+    [[ -n $REPLY ]]
+    return
+  fi
   REPLY=${hits[1]:h}
-  (( ${#hits} ))
 }
 
 # The nearest project venv from <dir> (default $PWD) up to, not including, $HOME or /.

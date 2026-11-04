@@ -1161,7 +1161,7 @@ _axle_join() {
 }
 
 _axle_render() {
-  setopt localoptions noglobsubst
+  setopt localoptions noglobsubst extendedglob
   # The frame and arrow are one piece (╭─ … ╰─➜) in one colour: the accent, deep red
   # under memory pressure, red after a failure (a failure wins).
   local char=$AXLE_PROMPT_CHAR colour=$_axle_c[accent]

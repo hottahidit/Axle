@@ -42,7 +42,7 @@ _axle_run_code_port() {
 # The Python to use (REPLY): the project venv's, else python3, else python.
 _axle_run_python() {
   local root=$1
-  if _axle_venv_in $root && [[ -x $REPLY/bin/python ]]; then
+  if _axle_venv_find $root && [[ -x $REPLY/bin/python ]]; then
     REPLY=$REPLY/bin/python
   elif whence -p python3 >/dev/null; then REPLY=python3
   else REPLY=python
@@ -56,7 +56,8 @@ _axle_run_set() {
 _axle_run_detect() {
   typeset -ga _axle_run_cmd=() _axle_run_env=()
   typeset -g _axle_run_kind='' _axle_run_port='' _axle_run_what='' _axle_run_reason='' \
-             _axle_run_source='' _axle_run_portway=''
+             _axle_run_source='' _axle_run_portway='' _axle_run_use_venv=''
+  typeset -gi _axle_run_self=0
   _axle_run_detect_any $1 || return 1
   _axle_run_detect_port $1
   return 0
@@ -91,7 +92,7 @@ _axle_run_detect_port() {
   local fw=${_axle_run_what#* · }; fw=${fw% \(*\)}
   local body=$_axle_run_source
   case $_axle_run_what in
-    'python · '(FastAPI|Starlette|Flask)) _axle_run_portway=flag:--port ;;
+    'python · '(FastAPI|Starlette|Flask)) (( _axle_run_self )) || _axle_run_portway=flag:--port ;;
     'python · Django')                   _axle_run_portway=django ;;
     'python · Streamlit')                _axle_run_portway=flag:--server.port ;;
     'python · Gradio')                   _axle_run_portway=env:GRADIO_SERVER_PORT ;;
@@ -292,19 +293,39 @@ _axle_run_detect_python() {
     text=$REPLY
     [[ $text == *(fastapi|starlette|flask|streamlit|gradio|dash)* ]] || continue
     fw=''
+    # (The module itself, not one named after it: flask_sqlalchemy doesn't make a Flask app.)
     for line in ${(f)text}; do
       case $line in
-        ([[:space:]]#(from|import)[[:space:]]##fastapi*)    fw=FastAPI ;;
-        ([[:space:]]#(from|import)[[:space:]]##starlette*)  fw=${fw:-Starlette} ;;
-        ([[:space:]]#(from|import)[[:space:]]##flask*)      fw=${fw:-Flask} ;;
-        ([[:space:]]#(from|import)[[:space:]]##streamlit*)  fw=Streamlit ;;
-        ([[:space:]]#(from|import)[[:space:]]##gradio*)     fw=${fw:-Gradio} ;;
-        ([[:space:]]#(from|import)[[:space:]]##dash*)       fw=${fw:-Dash} ;;
+        ([[:space:]]#(from|import)[[:space:]]##fastapi([[:space:].,]*|)) fw=FastAPI ;;
+        ([[:space:]]#(from|import)[[:space:]]##starlette([[:space:].,]*|)) fw=${fw:-Starlette} ;;
+        ([[:space:]]#(from|import)[[:space:]]##flask([[:space:].,]*|)) fw=${fw:-Flask} ;;
+        ([[:space:]]#(from|import)[[:space:]]##streamlit([[:space:].,]*|)) fw=Streamlit ;;
+        ([[:space:]]#(from|import)[[:space:]]##gradio([[:space:].,]*|)) fw=${fw:-Gradio} ;;
+        ([[:space:]]#(from|import)[[:space:]]##dash([[:space:].,]*|)) fw=${fw:-Dash} ;;
       esac
     done
     [[ -n $fw ]] || continue
     rel=${f#$root/}
     local port=''
+    # A file that starts the server itself under __main__ knows how it should run (it may
+    # start other things first, set its host, ...): run it, not the framework's runner.
+    if [[ $fw == (FastAPI|Starlette|Flask) && $text == *__name__*__main__* && $text == *(.run\(|serve\()* ]]; then
+      _axle_run_self=1
+      _axle_run_cmd=($py $rel)
+      port=5000; [[ $fw == Flask ]] || port=8000
+      local cfg envport=0
+      for cfg in $f $root/(config|settings).py(N.); do
+        _axle_run_read $cfg || continue
+        if [[ $REPLY == (#b)*(environ.get|getenv)\([\"\']PORT[\"\'](,[[:space:]]#[\"\']#([0-9]##)|)* ]]; then
+          envport=1 _axle_run_portway=env:PORT
+          [[ -n $match[3] ]] && port=$match[3]
+          break
+        fi
+      done
+      (( envport )) || { _axle_run_code_port "$text" && port=$REPLY }
+      _axle_run_set service $port "python · $fw" "$rel starts itself"
+      return 0
+    fi
     case $fw in
       FastAPI|Starlette)
         var=app
@@ -343,7 +364,7 @@ _axle_run_detect_python() {
     done
     if (( ${#entries} == 1 )); then
       local bin=$entries[1]
-      _axle_venv_in $root && [[ -x $REPLY/bin/$bin ]] && bin=$REPLY/bin/$bin
+      _axle_venv_find $root && [[ -x $REPLY/bin/$bin ]] && bin=$REPLY/bin/$bin
       _axle_run_cmd=($bin)
       _axle_run_source=$entries[1]
       _axle_run_set task '' python "pyproject.toml script ${entries[1]}"

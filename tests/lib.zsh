@@ -1,6 +1,7 @@
 # Helpers for Axle's tests (sourced by tests/run.zsh into each test's own zsh).
 
-setopt extendedglob
+# (No `setopt extendedglob` here: tests run under zsh's default options, like a real shell.
+# Helpers that need it set it for themselves.)
 zmodload zsh/datetime
 typeset -g ROOT=$AXLE_TEST_ROOT
 export AXLE_MARKS=0                       # no shell-integration escapes in captured output
@@ -22,6 +23,7 @@ assert_eq() {
 
 # assert_match <actual> <pattern> [what]
 assert_match() {
+  setopt localoptions extendedglob
   [[ $1 == ${~2} ]] && return 0
   print -r -- "  ${3:-no match}"
   print -r -- "    pattern: $2"
@@ -39,6 +41,7 @@ assert_contains() {
 }
 
 assert_not_match() {
+  setopt localoptions extendedglob
   [[ $1 != ${~2} ]] && return 0
   print -r -- "  ${3:-unexpected match}"
   print -r -- "    pattern: $2"
@@ -46,8 +49,15 @@ assert_not_match() {
   exit 1
 }
 
+# Text without its colours (REPLY).
+nocolor() {
+  setopt localoptions extendedglob
+  REPLY=${1//$'\e'\[[0-9;]#m/}
+}
+
 # Prompt text as it appears on screen: prompt escapes expanded, colours and links removed.
 plain() {
+  setopt localoptions extendedglob
   local o=${(S)1//\%\{*\%\}/}
   o=${(%)o}
   o=${o//$'\e'\[[0-9;]#m/}

@@ -137,7 +137,8 @@ test_run_detects_each_sample() {
   local py=python; whence -p python3 >/dev/null && py=python3
   local -a cases=(
     "fastapi|$py -m uvicorn main:api --reload | service | 8000 | python · FastAPI"
-    "flask|$py -m flask --app app.py run --debug --port 5050 | service | 5050 | python · Flask"
+    "flask|$py -m flask --app app.py run --debug | service | 5000 | python · Flask"
+    "flask-main|$py app.py | service | 5000 | python · Flask"
     "django|$py manage.py runserver | service | 8000 | python · Django"
     "streamlit|$py -m streamlit run streamlit_app.py | service | 8501 | python · Streamlit"
     "py-script|tool | task |  | python"
@@ -217,7 +218,7 @@ test_run_from_home_returns_to_last_project() {
   cd $HOME
   local out
   out=$(axle run </dev/null 2>&1; print "pwd=$PWD")
-  out=${out//$'\e'\[[0-9;]#m/}                  # (colours)
+  local REPLY; nocolor "$out"; out=$REPLY
   assert_contains "$out" "↩ py-entry (last worked on 1m ago)" "says where it goes"
   assert_contains "$out" "pwd=$T/fx/py-entry" "and goes there"
   out=$(axle run --dry-run 2>&1)
@@ -456,7 +457,7 @@ test_run_port_ways() {
   local REPLY c
   local -a cases=(
     "fastapi|--port 9001|python3 -m uvicorn main:api --reload --port 9001"
-    "flask|(already --port 5050)|python3 -m flask --app app.py run --debug --port 9001"
+    "flask|--port|python3 -m flask --app app.py run --debug --port 9001"
     "django|9001|python3 manage.py runserver 9001"
     "streamlit|--server.port|python3 -m streamlit run streamlit_app.py --server.port 9001"
     "vite|pnpm: --port|pnpm run dev --port 9001"
@@ -836,7 +837,7 @@ test_run_compose_full_cycle() {
   cd $T/fx/compose-app
   local out
   out=$(axle run --yes </dev/null 2>&1) || fail "up: $out"
-  out=${out//$'\e'\[[0-9;]#m/}                  # (colours)
+  local REPLY; nocolor "$out"; out=$REPLY
   assert_contains "$out" "compose-app up (docker compose) on http://localhost:8080" "says it's up"
   assert_contains "$(<$HOME/.cache/axle/drops/run-compose-app)" "text=compose-app :8080" "the tab"
   out=$(axle run ls 2>&1); assert_match "$out" "*compose-app*compose*8080*" "ls"
@@ -851,5 +852,97 @@ test_run_compose_full_cycle() {
   assert_contains "$log" "$f down" "down, in full"
   assert_eq "$(axle run ls)" "nothing running" "nothing left"
   [[ -e $HOME/.cache/axle/drops/run-compose-app ]] && fail "no tab left"
+  return 0
+}
+
+# --- detection and venvs, from a real project's layout (tests/fixtures/run/flask-main) ------
+
+# A fake venv: mkvenv <folder>
+mkvenv() { mkdir -p $1/bin; : > $1/pyvenv.cfg; print '#!/bin/sh\necho "python from $0"' > $1/bin/python; chmod +x $1/bin/python }
+
+test_run_app_that_starts_itself() {
+  AXLE_MODULES=(run) load_tool
+  fixtures
+  local -a reply; local REPLY
+  _axle_run_parts $T/fx/flask-main
+  assert_eq "$reply" "." "a package and an extension's import aren't parts"
+  _axle_run_detect $T/fx/flask-main
+  assert_eq "$_axle_run_reason" "app.py starts itself" "its main(), not flask run"
+  assert_eq "$_axle_run_portway" "env:PORT" "config.py reads PORT"
+  print 'PORT=5055' > $T/fx/flask-main/.env
+  _axle_run_detect $T/fx/flask-main; assert_eq "$_axle_run_port" 5055 "and .env sets it"
+  # Extensions and packages named after a framework aren't that framework.
+  mkdir -p $T/ext
+  print 'from flask_cors import CORS\nimport dash_bootstrap\nfrom fastapi_utils import x' > $T/ext/tools.py
+  _axle_run_detect $T/ext && fail "only extensions: $_axle_run_what"
+  print 'import flask.cli' > $T/ext/app.py
+  _axle_run_detect $T/ext; assert_eq "$_axle_run_what" "python · Flask" "flask.cli is flask"
+}
+
+test_venv_of_any_name() {
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/p/sub; : > $T/p/requirements.txt; print 'print(1)' > $T/p/main.py
+  mkvenv $T/p/.espresso
+  local REPLY
+  _axle_venv_in $T/p; assert_eq "$REPLY" "$T/p/.espresso" "any name, with pyvenv.cfg"
+  _axle_run_detect $T/p; _axle_run_show $T/p
+  assert_eq "$REPLY" ".espresso/bin/python main.py" "and it's what runs"
+  mkvenv $T/p/.venv
+  _axle_venv_in $T/p; assert_eq "$REPLY" "$T/p/.venv" "the usual name first"
+  # A part uses the project's venv when it has none of its own.
+  mkdir -p $T/m/api; mkvenv $T/m/.venv; print 'print(1)' > $T/m/api/main.py
+  _axle_run_detect $T/m/api; _axle_run_show $T/m/api
+  assert_eq "$REPLY" "$T/m/.venv/bin/python main.py" "a part: the venv above it"
+  mkdir -p $T/empty; _axle_venv_in $T/empty && fail "no venv here"
+  # A venv beside a project isn't its venv, or its parent folder's.
+  mkdir -p $T/shelf/tools-venv $T/shelf/proj; : > $T/shelf/tools-venv/pyvenv.cfg; : > $T/shelf/proj/requirements.txt
+  _axle_venv_find $T/shelf/proj && fail "the venv next door: $REPLY"
+  return 0
+}
+
+# When another venv is active: AXLE_RUN_VENV, and what actually runs.
+test_run_venv_conflict() {
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/p; print 'print(1)' > $T/p/main.py; mkvenv $T/p/.espresso; mkvenv $T/other
+  local out
+  cd $T/p
+  export VIRTUAL_ENV=$T/other; path=($T/other/bin $path)
+  out=$(axle run --yes </dev/null 2>&1)
+  assert_contains "$out" "python from $T/p/.espresso/bin/python" "no terminal: the project's"
+  assert_contains "$out" "not the active one" "and says so"
+  AXLE_RUN_VENV=active
+  out=$(axle run </dev/null 2>&1)
+  assert_contains "$out" "python from $T/other/bin/python" "AXLE_RUN_VENV=active"
+  AXLE_RUN_VENV=project
+  out=$(axle run </dev/null 2>&1)
+  assert_contains "$out" "python from $T/p/.espresso/bin/python" "AXLE_RUN_VENV=project"
+  [[ $out == *"not the active one"* ]] && fail "project: no note needed"
+  # No venv here: it says it's using the other project's.
+  unset AXLE_RUN_VENV
+  rm -rf $T/p/.espresso
+  out=$(axle run --yes </dev/null 2>&1)
+  assert_contains "$out" "has no venv: using the active one" "says whose it's using"
+  # A venv with no Python in it.
+  mkdir -p $T/broken/.venv; : > $T/broken/.venv/pyvenv.cfg; print 'print(1)' > $T/broken/main.py
+  cd $T/broken; unset VIRTUAL_ENV
+  out=$(axle run --yes </dev/null 2>&1)
+  assert_contains "$out" "has no working Python" "a broken venv is said"
+}
+
+# The question, in a terminal: n keeps the active venv.
+test_run_venv_question_in_a_terminal() {
+  zmodload zsh/zpty 2>/dev/null || return 0
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/p; print 'print(1)' > $T/p/main.py; mkvenv $T/p/.espresso; mkvenv $T/other
+  print -r -- 'echo "python from $0" >> '$T'/ran' >> $T/other/bin/python
+  print -r -- 'echo "python from $0" >> '$T'/ran' >> $T/p/.espresso/bin/python
+  print -l "AXLE_MODULES=(run); source $ROOT/axle.plugin.zsh" "export VIRTUAL_ENV=$T/other" "path=($T/other/bin \$path)" "cd $T/p" > $T/setup.zsh
+  zpty sh "HOME=$HOME XDG_CONFIG_HOME=$XDG_CONFIG_HOME XDG_CACHE_HOME=$XDG_CACHE_HOME XDG_DATA_HOME=$XDG_DATA_HOME HISTFILE=$T/hist TERM=xterm AXLE_UPDATE_CHECK=0 zsh -f -i"
+  zpty -w sh "PS1='> '; source $T/setup.zsh; : > $T/ready"
+  _wait() { local -i i; local c; for i in {1..150}; do while zpty -rt sh c 2>/dev/null; do :; done; [[ -e $1 ]] && return 0; sleep 0.1; done; fail "no answer ($1)" }
+  _wait $T/ready
+  zpty -w sh "axle run; : > $T/d1"; sleep 1; zpty -n -w sh y; sleep 0.7; zpty -n -w sh n; _wait $T/d1
+  assert_contains "$(<$T/ran)" "$T/other/bin/python" "n: the active one"
+  zpty -w sh 'exit'; zpty -d sh 2>/dev/null
   return 0
 }

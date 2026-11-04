@@ -37,6 +37,16 @@ _axle_run_pstart() {
   [[ -n $REPLY ]]
 }
 
+# Put a venv on this process's PATH instead of any active one, the way the env module does
+# it (never `activate`). <venv>: its path, or - to leave the environment as it is.
+_axle_run_enter_venv() {
+  [[ $1 == - || -z $1 ]] && return 0
+  [[ -n $VIRTUAL_ENV && $VIRTUAL_ENV != $1 ]] && path=(${path:#$VIRTUAL_ENV/bin})
+  export VIRTUAL_ENV=$1
+  path=($1/bin ${path:#$1/bin})
+  unset PYTHONHOME
+}
+
 # A file of NUL-separated words (reply). (`read -d ''` would stop at the first one.)
 _axle_run_words() { reply=("${(@0)mapfile[$1]}") }
 
@@ -252,7 +262,8 @@ _axle_run_start() {
   # of an interactive shell keeps its terminal open and fails once the terminal closes.
   local zsh_bin=${commands[zsh]:-zsh}
   [[ -x /proc/$$/exe ]] && zsh_bin=/proc/$$/exe      # (the very zsh running now)
-  $zsh_bin -f -c 'source "$1/lib/project.zsh" && source "$1/modules/run/service.zsh" &&
+  _axle_run_put $dir venv "$_axle_run_use_venv"
+  AXLE_RUN_USE_VENV=$_axle_run_use_venv $zsh_bin -f -c 'source "$1/lib/project.zsh" && source "$1/modules/run/service.zsh" &&
                   shift && _axle_run_supervise "$@"' axle-run \
     $AXLE_ROOT $root $name $dir "$_axle_run_port" ${#envs} "${envs[@]}" "${_axle_run_cmd[@]}" \
     </dev/null >>$dir/log 2>&1 &!
@@ -280,12 +291,10 @@ _axle_run_supervise() {
   if [[ -n $AXLE_RUN_DEBUG ]]; then exec 2>>$dir/trace; setopt xtrace; fi
   _axle_run_put $dir watcher $$
   cd -- $root || { _axle_run_put $dir state crashed; _axle_run_put $dir code 1; return 1 }
-  local REPLY e
-  if _axle_venv_in $root; then
-    export VIRTUAL_ENV=$REPLY
-    path=($REPLY/bin ${path:#$REPLY/bin})
-    unset PYTHONHOME
-  fi
+  local REPLY e use=$AXLE_RUN_USE_VENV
+  unset AXLE_RUN_USE_VENV
+  [[ -z $use ]] && _axle_venv_find $root && use=$REPLY
+  _axle_run_enter_venv "$use"
   [[ -n $port ]] && export PORT=$port
   for e in $envs; do export "$e"; done             # .env values (data) and ours, as given
   "${cmd[@]}" 2>&1 &                               # (its errors to the log too)
@@ -492,6 +501,7 @@ _axle_run_restart() {
     return
   fi
   _axle_run_get $dir root; root=$REPLY
+  _axle_run_get $dir venv; typeset -g _axle_run_use_venv=$REPLY
   _axle_run_get $dir port; port=$REPLY
   _axle_run_get $dir kind; kind=$REPLY
   [[ -r $dir/cmd ]] || { print -u2 "axle run: don't know how $name was started"; return 1 }

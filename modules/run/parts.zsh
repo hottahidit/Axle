@@ -20,6 +20,8 @@ _axle_run_parts() {
   for dir in ${cands[1,40]}; do
     _axle_venv_in ${dir:h} && [[ $REPLY == $dir ]] && continue
     [[ -e $dir/pyvenv.cfg ]] && continue           # a venv
+    # A Python package of the project, with no project file of its own, isn't a part.
+    [[ -e $dir/__init__.py && -z $dir/(pyproject.toml|requirements.txt|setup.py|Pipfile|package.json|manage.py)(#qN[1]) ]] && continue
     _axle_run_detect $dir && found+=(${dir#$root/})
   done
   reply=($found)
@@ -98,8 +100,10 @@ _axle_run_tmux() {
     return 0
   fi
   local -a envs=() reply
-  if _axle_venv_in $dir; then
-    envs+=(-e VIRTUAL_ENV=$REPLY -e "PATH=$REPLY/bin:$PATH")
+  local use=${_axle_run_use_venv:--}
+  if [[ $use != - ]]; then
+    local -a p=(${path:#$VIRTUAL_ENV/bin})
+    envs+=(-e VIRTUAL_ENV=$use -e "PATH=$use/bin:${(j.:.)p}")
   fi
   [[ -n $_axle_run_port ]] && envs+=(-e PORT=$_axle_run_port)
   local e

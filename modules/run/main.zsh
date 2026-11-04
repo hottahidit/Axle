@@ -172,11 +172,7 @@ _axle_run_exec() {
   local root=$1 REPLY
   (
     cd -- $root || exit 1
-    if _axle_venv_in $root; then
-      export VIRTUAL_ENV=$REPLY
-      path=($REPLY/bin ${path:#$REPLY/bin})
-      unset PYTHONHOME
-    fi
+    _axle_run_enter_venv "$_axle_run_use_venv"
     # The same environment a background service gets: .env (data), PORT, what axle run set.
     local e
     local -a reply
@@ -195,13 +191,59 @@ _axle_run_approve() {
   local dir=$1 name=$2 yes=$3 REPLY
   _axle_run_trust_key $dir
   local key=$REPLY
-  _axle_run_trusted $key && return 0
-  if (( ! yes )); then
-    _axle_run_show $dir
-    _axle_printp "%F{${_axle_c[muted]:-244}}First run of this command in ${name//\%/%%} (${_axle_run_reason//\%/%%}).%f"
-    axle_confirm "Run it?  $_axle_run_what · $REPLY" n || return 1
+  if ! _axle_run_trusted $key; then
+    if (( ! yes )); then
+      _axle_run_show $dir
+      _axle_printp "%F{${_axle_c[muted]:-244}}First run of this command in ${name//\%/%%} (${_axle_run_reason//\%/%%}).%f"
+      axle_confirm "Run it?  $_axle_run_what · $REPLY" n || return 1
+    fi
+    _axle_run_trust $key
   fi
-  _axle_run_trust $key
+  _axle_run_choose_venv $dir $name $yes
+}
+
+# Which venv this run uses (_axle_run_use_venv: its path, or - to leave things as they are).
+# The project's own, unless another is active: AXLE_RUN_VENV says what then (ask, project or
+# active). Without a terminal to ask in, or with --yes, the project's.
+_axle_run_choose_venv() {
+  local dir=$1 name=$2 yes=$3 REPLY found='' active=$VIRTUAL_ENV use=project
+  local warn=${_axle_c[warn]:-yellow} muted=${_axle_c[muted]:-244}
+  typeset -g _axle_run_use_venv=-
+  if _axle_venv_find $dir; then
+    found=$REPLY
+    if [[ ! -x $found/bin/python ]]; then
+      _axle_printp "%F{$warn}!%f ${${found/#$HOME/~}//\%/%%} has no working Python, so it isn't used"
+      found=''
+    fi
+  fi
+  if [[ -z $found ]]; then
+    [[ $_axle_run_what == python* ]] || return 0
+    if [[ -n $active && $active != $dir && $active != $dir/* ]]; then
+      _axle_printp "%F{$warn}!%f ${name//\%/%%} has no venv: using the active one, ${${active/#$HOME/~}//\%/%%}"
+    elif [[ -z $active && -n $dir/(requirements.txt|pyproject.toml|Pipfile)(#qN[1]) ]]; then
+      _axle_printp "%F{$muted}${name//\%/%%} has no venv: using ${$(whence -p $_axle_run_cmd[1])//\%/%%}%f"
+    fi
+    return 0
+  fi
+  if [[ -n $active && ${active:A} != ${found:A} ]]; then
+    case ${AXLE_RUN_VENV:-ask} in
+      active)  use=active ;;
+      project) use=project ;;
+      *)
+        local rel=${found#$dir/} other=${active/#$HOME/~}
+        if (( yes )) || ! _axle_ui_tty; then
+          _axle_printp "%F{$muted}using ${name//\%/%%}'s venv ($rel), not the active one ($other)%f"
+        else
+          axle_confirm "${other} is active, and ${name} has its own venv ($rel). Use ${name}'s?" y || use=active
+        fi ;;
+    esac
+  fi
+  if [[ $use == active ]]; then
+    _axle_run_cmd[1]=${_axle_run_cmd[1]/#$found\/bin/$active/bin}
+    _axle_run_use_venv=$active
+  else
+    _axle_run_use_venv=$found
+  fi
 }
 
 # The ▶ line: the command about to run (and what axle run adds to its environment).
@@ -434,7 +476,14 @@ _axle_run_dry() {
   _axle_printp "%B${name//\%/%%}%b"
   print -r -- "  root   ${root/#$HOME/~}"
   print -r -- "  why    $_axle_run_why${_axle_run_marker:+ · marked by $_axle_run_marker}"
-  _axle_venv_in $root && print -r -- "  venv   ${REPLY#$root/}"
+  if _axle_venv_find $root; then
+    local found=$REPLY
+    if [[ -n $VIRTUAL_ENV && ${VIRTUAL_ENV:A} != ${found:A} ]]; then
+      print -r -- "  venv   ${found#$root/} (${VIRTUAL_ENV/#$HOME/~} is active: AXLE_RUN_VENV=${AXLE_RUN_VENV:-ask})"
+    else
+      print -r -- "  venv   ${found#$root/}"
+    fi
+  fi
   if (( ! ${#parts} )); then
     print -r -- "  run    ? (no way to run it found)"
     return 0
