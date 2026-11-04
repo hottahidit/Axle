@@ -1,5 +1,11 @@
 # Changelog
 
+## nemc compat 0.1.2 (branch `MnemoCetus`)
+
+- `axle configure` asks whether to show MnemoCetus in the prompt, with a live preview, when nemc
+  is installed.
+- `axle preview` has `nemc-security`, `nemc-changed` and `nemc-clean`.
+
 ## nemc compat 0.1.1 (branch `MnemoCetus`)
 
 - A compat-only update now says so, instead of "axle 0.2.3 is out (you have 0.2.3)".

@@ -103,6 +103,7 @@ _pv_reset() {
   _axle_last_status=() _axle_elapsed=0 _axle_mem_used=40 _axle_sudo_until=0
   _axle_uid=1000 _axle_keymap=main _axle_vscode=0 _axle_detail=$_pv_expanded
   _axle_power_glob="$_pv_dir/full/BAT*"
+  _axle_nemc_state=()                              # hide what nemc says about your folders
   if (( ${+_axle_ai_state} )); then
     local entry; local -a reply
     for entry in $AXLE_AI_STATUS; do
@@ -185,6 +186,12 @@ _pv_s_crowded()     {
 }
 _pv_add vscode      'VS Code terminal layout'
 _pv_s_vscode()      { cd $HOME/repos/dirty; _axle_vscode=1 }
+_pv_add nemc-security 'MnemoCetus: stored security findings'
+_pv_s_nemc-security() { _axle_nemc_state[$PWD]=security:3 }
+_pv_add nemc-changed 'MnemoCetus: changed since the last scan (NoxA)'
+_pv_s_nemc-changed() { _axle_nemc_state[$PWD]=changed:0 }
+_pv_add nemc-clean  'MnemoCetus: up to date (NoxA, expanded view)'
+_pv_s_nemc-clean()  { _axle_detail=1; _axle_nemc_state[$PWD]=clean:0 }
 
 # --- drawing --------------------------------------------------------------------
 

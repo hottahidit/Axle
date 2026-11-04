@@ -29,6 +29,7 @@ Commits are `(MnemoCetus)vX.Y.Z - Title`, numbered by the branch's own progress 
 
 ## Done
 
+- **v0.1.2:** the wizard offers the segment; `axle preview` shows its states.
 - **v0.1.1:** tested with real uv and pipx installs; clearer installer and update messages.
 - **v0.1:** `axle nemc`, the Benzene segment, stand-down of nemc's light, the install choice,
   doctor, settings.
@@ -37,6 +38,5 @@ Commits are `(MnemoCetus)vX.Y.Z - Title`, numbered by the branch's own progress 
 
 - A drop while a scan runs, and on new findings after `nemc rescan`.
 - `j` and `axle run` (once Legionary lands on `main`) using nemc's project list and categories.
-- The wizard: offer the segment and show its states in `axle preview`.
 - `axle stats` beside nemc's project data: where you work against what's bloated or stale.
 - A `nemc status --porcelain` in MnemoCetus, for a contract that isn't JSON by regex.

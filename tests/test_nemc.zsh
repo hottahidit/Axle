@@ -317,3 +317,93 @@ test_update_with_the_same_version_says_so() {
   assert_contains "$out" "updated (still $AXLE_VERSION)" "no 'x -> x'"
   assert_not_match "$out" "*no such file*" "a fresh cache folder is fine"
 }
+
+# --- axle preview and axle configure ----------------------------------------------
+
+test_preview_shows_each_state() {
+  load_theme
+  local out=$(axle preview nemc-security 2>&1)
+  assert_contains "$out" "nemc ● 3" "NoxA: findings"
+  assert_contains "$(axle preview nemc-changed 2>&1)" "nemc ●" "NoxA: changed"
+  assert_contains "$(axle preview nemc-clean 2>&1)" "nemc ●" "NoxA: clean, expanded"
+  assert_contains "$(axle preview --axon nemc-security 2>&1)" "nemc ● 3" "AxoN: findings"
+  assert_not_match "$(axle preview --axon nemc-changed 2>&1 | grep -v MnemoCetus)" "*nemc ●*" "AxoN: changed stays quiet"
+}
+
+test_preview_state_doesnt_leak_into_other_scenarios() {
+  load_theme
+  local out=$(axle preview nemc-security nemc-changed 2>&1)
+  assert_contains "$out" "nemc ● 3" "shown in its own"
+  assert_not_match "${out#*changed since the last scan}" "*nemc ● 3*" "not in the next one"
+}
+
+test_preview_works_without_nemc() {
+  path=(/usr/bin /bin); rehash
+  load_theme
+  assert_contains "$(axle preview nemc-security 2>&1)" "nemc ● 3" "it's faked"
+}
+
+test_wizard_offers_it_only_with_nemc() {
+  path=(/usr/bin /bin); rehash
+  load_theme
+  source $ROOT/lib/configure.zsh </dev/null >/dev/null 2>&1
+  assert_eq "$_cf_nemc" 0 "no nemc: not offered"
+  _cf_recount; local -i without=$_cf_total
+  _fake_nemc
+  source $ROOT/lib/configure.zsh </dev/null >/dev/null 2>&1
+  assert_eq "$_cf_nemc" 1 "offered"
+  _cf_recount; assert_eq "$_cf_total" $(( without + 1 )) "one more step"
+}
+
+test_wizard_offers_it_right_after_install_off_path() {
+  path=(/usr/bin /bin); rehash
+  load_theme
+  AXLE_NEMC_INSTALLED=1
+  source $ROOT/lib/configure.zsh </dev/null >/dev/null 2>&1
+  assert_eq "$_cf_nemc" 1 "installed a moment ago"
+}
+
+test_wizard_not_offered_without_benzene() {
+  _fake_nemc
+  load_tool
+  source $ROOT/lib/configure.zsh </dev/null >/dev/null 2>&1
+  assert_eq "$_cf_nemc" 0 "the tool alone has no segment to offer"
+}
+
+test_wizard_save_keeps_a_setting_it_didnt_ask() {
+  load_theme
+  mkdir -p ${AXLE_CONFIG:h}
+  print -l 'AXLE_NEMC=0' > $AXLE_CONFIG
+  source $ROOT/lib/configure.zsh </dev/null >/dev/null 2>&1
+  _cf_theme=1 _cf_tool=0
+  _cf=(variant nox nerd 0 palette mocha char '>' transient 1 alarms 1 bubbles 1 clock 1 ai claude)
+  _cf_write
+  assert_contains "$(<$AXLE_CONFIG)" 'AXLE_NEMC=0' "not asked: kept"
+  _cf[nemc]=1
+  _cf_write
+  assert_contains "$(<$AXLE_CONFIG)" 'AXLE_NEMC=1' "asked: replaced"
+  assert_not_match "$(<$AXLE_CONFIG)" "*AXLE_NEMC=0*" "only one"
+}
+
+# The real wizard in a terminal: defaults everywhere, except "leave it out" at this step.
+test_wizard_step_saves_the_choice() {
+  zmodload zsh/zpty 2>/dev/null || return 0
+  _fake_nemc
+  zpty sh "HOME=$HOME XDG_CONFIG_HOME=$XDG_CONFIG_HOME XDG_CACHE_HOME=$XDG_CACHE_HOME XDG_DATA_HOME=$XDG_DATA_HOME HISTFILE=$T/hist TERM=xterm AXLE_UPDATE_CHECK=0 COLUMNS=100 LINES=50 zsh -f -i"
+  zpty -w sh "PS1='> '; source $ROOT/axle.plugin.zsh; source $ROOT/benzene.zsh-theme; PS1='> '; axle configure; : > $T/done"
+  local chunk seen='' ; local -i i asked=0
+  for i in {1..150}; do
+    sleep 0.2
+    chunk=''; while zpty -rt sh chunk 2>/dev/null; do seen+=$chunk; chunk=''; done
+    [[ -e $T/done ]] && break
+    if (( ! asked )) && [[ $seen == *"MnemoCetus in the prompt?"* ]]; then
+      asked=1; zpty -n -w sh 2
+    elif [[ $seen == *"q cancels"* || $seen == *"[Enter] save"* ]]; then
+      seen=''; zpty -n -w sh $'\r'
+    fi
+  done
+  zpty -w sh 'exit' 2>/dev/null; zpty -d sh 2>/dev/null
+  (( asked )) || fail "the step never appeared; last seen: ${(q+)seen[-400,-1]}"
+  [[ -e $T/done ]] || fail "the wizard didn't finish"
+  assert_contains "$(<$XDG_CONFIG_HOME/axle/config.zsh)" "AXLE_NEMC=0" "saved"
+}

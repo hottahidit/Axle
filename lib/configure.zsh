@@ -9,6 +9,8 @@ if (( _cf_theme )); then
 else
   _pv_cleanup() { : }
 fi
+typeset -gi _cf_nemc=0                             # offer MnemoCetus? (asked before the preview swaps HOME)
+(( _cf_theme )) && _axle_nemc_available && _cf_nemc=1
 
 typeset -g  _cf_file=${AXLE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/axle/config.zsh}
 typeset -g  _cf_zshrc=${ZDOTDIR:-$HOME}/.zshrc     # (before the preview swaps HOME)
@@ -23,6 +25,7 @@ _cf_recount() {
   _cf_total=0
   if (( _cf_theme )); then
     [[ ${_cf[variant]:-${AXLE_VARIANT:-nox}} == axon ]] && (( _cf_total += 6 )) || (( _cf_total += 8 ))
+    (( _cf_nemc )) && (( _cf_total += 1 ))
   fi
   if (( _cf_tool )); then
     local -a mods=(${=_cf[modules]:-$AXLE_MODULES})
@@ -51,6 +54,7 @@ _cf_apply() {
   AXLE_ALARMS=${_cf[alarms]:-${AXLE_ALARMS:-1}} AXLE_BUBBLES=${_cf[bubbles]:-${AXLE_BUBBLES:-1}}
   AXLE_CLOCK=${_cf[clock]:-${AXLE_CLOCK:-1}}
   AXLE_AXON_SLOW=${_cf[slow]:-${AXLE_AXON_SLOW:-10}}
+  AXLE_NEMC=${_cf[nemc]:-${AXLE_NEMC:-1}}
   _axle_load_variant $AXLE_VARIANT >/dev/null
 }
 
@@ -197,6 +201,14 @@ _cf_theme_steps() {
     _cf_ask "AI status dots (expanded view)?" ai "${AXLE_AI_STATUS:-claude}" \
       "Claude:claude" "Claude and OpenAI:claude openai" "Claude and your local Ollama:claude ollama" "None:"
   fi
+
+  if (( _cf_nemc )); then
+    _cf_scenes='nemc-security nemc-changed'
+    _cf_note="Findings show as a red bubble, changes since the last scan as an amber dot."
+    (( axon )) && { _cf_scenes='nemc-security'; _cf_note="AxoN shows only findings, as a red alarm." }
+    _cf_ask "MnemoCetus in the prompt?" nemc ${AXLE_NEMC:-1} \
+      "Show it (replaces nemc's own light):1" "Leave it out (nemc keeps its own light):0"
+  fi
 }
 
 _cf_tool_steps() {
@@ -240,6 +252,7 @@ _cf_write() {
              "AXLE_CLOCK=$_cf[clock]              # 0 = clock only when expanded"
              "AXLE_AI_STATUS=($_cf[ai])")
     fi
+    [[ -n $_cf[nemc] ]] && { keys+=(AXLE_NEMC); ours+=("AXLE_NEMC=$_cf[nemc]") }
   fi
   if (( _cf_tool )); then
     keys+=(AXLE_MODULES AXLE_SUGGEST AXLE_SUGGEST_LIST AXLE_ENV_QUIET)
@@ -290,6 +303,7 @@ _cf_main() {
   if (( _cf_theme )); then
     if [[ $_cf[variant] == axon ]]; then _cf_preview dirty failed interrupt sudo
     else _cf_preview dirty failed prod sudo; fi
+    [[ -n $_cf[nemc] ]] && { print; print -r -- "  MnemoCetus in the prompt: ${${_cf[nemc]:#0}:+shown}${${(M)_cf[nemc]:#0}:+left out}" }
   fi
   if (( _cf_tool )); then
     print
