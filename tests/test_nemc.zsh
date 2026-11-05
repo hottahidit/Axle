@@ -391,19 +391,21 @@ test_wizard_step_saves_the_choice() {
   _fake_nemc
   zpty sh "HOME=$HOME XDG_CONFIG_HOME=$XDG_CONFIG_HOME XDG_CACHE_HOME=$XDG_CACHE_HOME XDG_DATA_HOME=$XDG_DATA_HOME HISTFILE=$T/hist TERM=xterm AXLE_UPDATE_CHECK=0 COLUMNS=100 LINES=50 zsh -f -i"
   zpty -w sh "PS1='> '; source $ROOT/axle.plugin.zsh; source $ROOT/benzene.zsh-theme; PS1='> '; axle configure; : > $T/done"
-  local chunk seen='' ; local -i i asked=0
+  local chunk key seen='' ; local -i i asked=0
   for i in {1..150}; do
     sleep 0.2
     chunk=''; while zpty -rt sh chunk 2>/dev/null; do seen+=$chunk; chunk=''; done
     [[ -e $T/done ]] && break
-    if (( ! asked )) && [[ $seen == *"MnemoCetus in the prompt?"* ]]; then
-      asked=1; zpty -n -w sh 2
-    elif [[ $seen == *"q cancels"* || $seen == *"[Enter] save"* ]]; then
-      seen=''; zpty -n -w sh $'\r'
-    fi
+    # One key per screen, once it's fully drawn: "q cancels" is also in the header, so a slow
+    # machine would get two keys for one screen, and the rest land on later steps.
+    [[ $seen == *("Enter chooses"|"Enter when done"|"[Enter] save")* ]] || continue
+    key=$'\r'
+    [[ $seen == *"MnemoCetus in the prompt?"* ]] && { asked=1; key=2 }
+    seen=''; zpty -n -w sh $key
   done
   zpty -w sh 'exit' 2>/dev/null; zpty -d sh 2>/dev/null
   (( asked )) || fail "the step never appeared; last seen: ${(q+)seen[-400,-1]}"
   [[ -e $T/done ]] || fail "the wizard didn't finish"
   assert_contains "$(<$XDG_CONFIG_HOME/axle/config.zsh)" "AXLE_NEMC=0" "saved"
+  assert_contains "$(<$XDG_CONFIG_HOME/axle/config.zsh)" "AXLE_ENV_QUIET=0" "its key landed on this step"
 }

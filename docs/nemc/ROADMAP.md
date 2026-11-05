@@ -29,6 +29,7 @@ Commits are `(MnemoCetus)vX.Y.Z - Title`, numbered by the branch's own progress 
 
 ## Done
 
+- **v0.1.3:** the wizard test no longer races on slow machines (macOS CI).
 - **v0.1.2:** the wizard offers the segment; `axle preview` shows its states.
 - **v0.1.1:** tested with real uv and pipx installs; clearer installer and update messages.
 - **v0.1:** `axle nemc`, the Benzene segment, stand-down of nemc's light, the install choice,

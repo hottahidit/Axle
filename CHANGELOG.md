@@ -1,5 +1,10 @@
 # Changelog
 
+## nemc compat 0.1.3 (branch `MnemoCetus`)
+
+- Tests: the wizard test sends one key per fully drawn screen, so a slow machine (macOS CI)
+  no longer gets a key meant for one step on the next.
+
 ## nemc compat 0.1.2 (branch `MnemoCetus`)
 
 - `axle configure` asks whether to show MnemoCetus in the prompt, with a live preview, when nemc
