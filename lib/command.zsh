@@ -70,41 +70,6 @@ axle() {
   return 1
 }
 
-_axle_help() {
-  local group name title
-  local -A titles=(general 'axle' theme 'Benzene, the prompt' tool 'axle, the tool')
-  for group in general theme tool; do
-    local -a names=()
-    for name in ${(ok)_axle_cmd_group}; do
-      [[ $_axle_cmd_group[$name] == $group ]] && names+=($name)
-    done
-    (( ${#names} )) || continue
-    [[ $group == general ]] || { print; _axle_printp "%B${titles[$group]}%b" }
-    for name in $names; do
-      local usage=${_axle_cmd_usage[$name]:-$name}
-      if (( ${COLUMNS:-80} < 72 )); then     # narrow: the description on its own line
-        print -r -- "  axle $usage"
-        _axle_printp "      %F{${_axle_c[muted]:-244}}${_axle_cmd_desc[$name]//\%/%%}%f"
-      else
-        print -r -- "  axle ${(r:30:)usage} $_axle_cmd_desc[$name]"
-      fi
-    done
-  done
-  print
-  _axle_printp "%F{${_axle_c[muted]:-244}}axle help <command> for its options and examples; Tab completes everything.%f"
-  if (( ! ${_axle_tool_loaded:-0} )); then
-    print
-    print -r -- "More with the axle tool: smart suggestions, jump, history search, automatic"
-    if [[ -r $AXLE_ROOT/axle.plugin.zsh ]]; then
-      print -r -- "venvs, stats, doctor. It's installed: add axle to plugins=(...), or source axle.plugin.zsh."
-    elif [[ -e $AXLE_ROOT/.git ]]; then
-      print -r -- "venvs, stats, doctor. Run $AXLE_ROOT/install.sh again and choose it."
-    else
-      print -r -- "venvs, stats, doctor. Get it with a fresh copy of Axle: $AXLE_REPO"
-    fi
-  fi
-}
-
 # Settings saved by `axle configure` (after ~/.zshrc, so they win). Both parts read it.
 _axle_load_config() {
   (( ${_axle_config_loaded:-0} && ! ${_axle_reloading:-0} )) && return 0
@@ -189,7 +154,7 @@ _axle_lazy lib/update.zsh   _axle_cmd_update _axle_cmd_uninstall _axle_update_st
                             _axle_update_changes _axle_update_checkout_ok
 _axle_lazy lib/ui.zsh       axle_select axle_checkbox axle_confirm axle_input _axle_ui_key \
                             _axle_ui_tty _axle_ui_draw _axle_ui_done _axle_ui_fit
-_axle_lazy lib/help.zsh     _axle_help_one _axle_did_you_mean _axle_distance
+_axle_lazy lib/help.zsh     _axle_help _axle_help_one _axle_did_you_mean _axle_distance
 _axle_lazy lib/settings.zsh _axle_cmd_config _axle_setting _axle_config_value _axle_config_write
 _axle_lazy lib/complete.zsh _axle_complete
 _axle_lazy lib/project.zsh  _axle_scan_markers _axle_has_marker _axle_venv_in _axle_venv_find \

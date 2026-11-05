@@ -166,6 +166,41 @@ _axle_run_show() {
   REPLY=${(j: :)out}
 }
 
+# Is the detected command's program there (on PATH, in the project's venv or the active
+# one, or a file in the project)? If not, say so and how to get it, before any question.
+_axle_run_installed() {
+  local dir=$1 name=$2 prog=$_axle_run_cmd[1] REPLY
+  [[ -n $prog ]] || return 0
+  if [[ $prog == */* ]]; then
+    [[ -x $prog || -x $dir/$prog ]] && return 0
+  else
+    whence -p -- $prog >/dev/null && return 0
+    [[ -n $VIRTUAL_ENV && -x $VIRTUAL_ENV/bin/$prog ]] && return 0
+    _axle_venv_find $dir && [[ -x $REPLY/bin/$prog ]] && return 0
+  fi
+  local how
+  case ${prog:t} in
+    pnpm|yarn)                       # (Node 25 stopped bundling corepack)
+      if [[ -n ${commands[node]} && -x ${commands[node]:h}/corepack ]]; then
+        how="corepack enable ${prog:t}, or npm install -g ${prog:t}"
+      else
+        how="npm install -g ${prog:t}"
+      fi ;;
+    bun)       how="see https://bun.sh" ;;
+    node|npm|npx) how="install Node.js (https://nodejs.org, or nvm / fnm)" ;;
+    deno)      how="see https://deno.com" ;;
+    cargo)     how="install Rust with rustup (https://rustup.rs)" ;;
+    go)        how="install Go (https://go.dev/dl)" ;;
+    just)      how="install just (https://just.systems)" ;;
+    docker)    how="install Docker (https://docs.docker.com/get-docker)" ;;
+    make)      how="install make (on Debian / Ubuntu: sudo apt install make)" ;;
+    python*)   how="install Python, or create the project's venv" ;;
+    *)         how="install it into the project's venv or onto your PATH" ;;
+  esac
+  print -u2 -r -- "axle run: ${name} runs with ${prog:t}, which isn't installed: $how"
+  return 1
+}
+
 # Run the detected command in the foreground, in the project's root and its venv (set up
 # the way the env module does it: VIRTUAL_ENV and bin/ on PATH, never `activate`).
 _axle_run_exec() {
@@ -189,6 +224,7 @@ _axle_run_exec() {
 #   _axle_run_approve <dir> <name> <yes>     returns 1 if you said no
 _axle_run_approve() {
   local dir=$1 name=$2 yes=$3 REPLY
+  _axle_run_installed $dir $name || return 1
   _axle_run_trust_key $dir
   local key=$REPLY
   if ! _axle_run_trusted $key; then
@@ -318,9 +354,17 @@ _axle_cmd_run() {
 
   # Elsewhere, or a project you named: go there first.
   if [[ $_axle_run_from == last ]]; then
+    # Said first when you're in a folder of your own: why it isn't the one that runs.
+    if [[ $PWD != $HOME && $PWD != / ]]; then
+      local -a inside=($PWD/*(DN[1,2]))
+      local why='no project files'
+      (( ${#inside} )) || why="it's empty"
+      _axle_printp "%F{$muted}Nothing to run in ${${PWD/#$HOME/~}//\%/%%} (${why}).%f"
+    fi
     _axle_run_ago ${_axle_run_when[$root]}
     _axle_printp "%F{$accent}↩%f %B${name//\%/%%}%b %F{$muted}(last worked on ${REPLY})%f"
   fi
+  local from=$PWD
   [[ ${PWD:a} == $root || ${PWD:a} == $root/* ]] || cd -- $root || return 1
 
   if (( ! ${#parts} )); then
@@ -393,7 +437,10 @@ _axle_cmd_run() {
   if [[ $_axle_run_from == last ]] && (( ! yes )); then
     local -a names=()
     for p in $chosen; do _axle_run_partname $root $p; names+=($REPLY); done
-    axle_confirm "Run ${(j:, :)names}?" y || return 0
+    if ! axle_confirm "Run ${(j:, :)names}?" y; then
+      cd -- $from                                  # no: you stay where you were
+      return 0
+    fi
   fi
 
   # Start each part: services in the background, verbose ones in tmux; the one shown in

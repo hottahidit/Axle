@@ -65,6 +65,166 @@ _axle_did_you_mean() {
   reply=(${${(on)scored}#* })
 }
 
+# --- how it looks ------------------------------------------------------------------
+# Colours by role (the tool alone has no palette: plain terminal colours then).
+
+_axle_help_colours() {
+  typeset -g _axle_h_acc=${_axle_c[accent]:-magenta} _axle_h_cmd=${_axle_c[path]:-blue}
+  typeset -g _axle_h_mut=${_axle_c[muted]:-244} _axle_h_arg=${_axle_c[python]:-cyan}
+  typeset -g _axle_h_set=${_axle_c[changed]:-yellow} _axle_h_sep=${_axle_c[sep]:-240}
+  typeset -gi _axle_h_w=$(( ${COLUMNS:-80} > 100 ? 100 : ${COLUMNS:-80} ))
+  (( _axle_h_w > 20 )) || _axle_h_w=80
+  # Colours only for a terminal (and not with NO_COLOR): piped, it's plain text.
+  typeset -gi _axle_h_plain=0
+  [[ -t 1 && -z ${NO_COLOR:-} ]] || _axle_h_plain=1
+}
+
+# Print a line of help: styled in a terminal, plain otherwise.
+_axle_help_out() {
+  if (( ! _axle_h_plain )); then _axle_printp "$1"; return; fi
+  setopt localoptions extendedglob
+  local s=${(S)1//\%\{*\%\}/}
+  s=${(S)s//\%[FK]\{*\}/}
+  s=${s//\%[BbFfKkUu]/}
+  print -r -- "${s//\%\%/%}"
+}
+
+# A section rule: ── Title ─────────
+_axle_help_rule() {
+  local -i fill=$(( _axle_h_w - ${#1} - 6 ))
+  (( fill > 0 )) || fill=1
+  _axle_help_out "%F{$_axle_h_sep}──%f %B%F{$_axle_h_acc}${1//\%/%%}%f%b %F{$_axle_h_sep}${(pl:fill::─:)}%f"
+}
+
+# Words wrapped to <width> (reply = the lines).
+_axle_help_wrap() {
+  local text=$1 w line=''
+  local -i width=$2
+  reply=()
+  for w in ${=text}; do
+    if [[ -n $line ]] && (( ${#line} + 1 + ${#w} > width )); then
+      reply+=("$line"); line=$w
+    else
+      line+=${line:+ }$w
+    fi
+  done
+  [[ -n $line ]] && reply+=("$line")
+}
+
+# Usage words coloured: options and choices as arguments, the rest plain (REPLY).
+_axle_help_args() {
+  REPLY="%F{$_axle_h_arg}${1//\%/%%}%f"
+}
+
+# One line of a help page, coloured (REPLY). Examples (indented by two) get their command
+# coloured and a trailing explanation (after a run of spaces) muted; text gets setting
+# names picked out.
+_axle_help_line() {
+  setopt localoptions extendedglob
+  local line=${1//\%/%%} code note w
+  local -a out
+  if [[ $line == '  '[^[:space:]]* ]]; then
+    code=${line#  }
+    note=''
+    if [[ $code == (#b)(*[^[:space:]])(   ##)([^[:space:]]*) ]]; then
+      code=$match[1]; note=$match[2]$match[3]
+      [[ $code == *'   '* ]] && { note=${code#*   }$note; code=${code%%   *} }
+    fi
+    local -i first=1
+    for w in "${(@s: :)code}"; do
+      if (( first == 2 )) && [[ -n $w ]]; then     # axle's subcommand
+        out+=("%B%F{$_axle_h_cmd}$w%f%b"); first=0
+      elif (( first )) && [[ -n $w ]]; then
+        out+=("%F{$_axle_h_cmd}$w%f"); first=0
+        [[ $w == axle ]] && first=2
+      elif [[ $w == -* ]]; then
+        out+=("%F{$_axle_h_acc}$w%f")
+      elif [[ $w == AXLE_[A-Z_]## ]]; then
+        out+=("%F{$_axle_h_set}$w%f")
+      else
+        out+=("$w")
+      fi
+    done
+    REPLY="  ${(j: :)out}"
+    [[ -n $note ]] && REPLY+="%F{$_axle_h_mut}$note%f"
+  elif [[ $line == '   '* ]]; then
+    REPLY="%F{$_axle_h_mut}$line%f"                # an explanation carried over
+  else
+    REPLY=${line//(#b)(AXLE_[A-Z_]##)/%F{$_axle_h_set}$match[1]%f}
+  fi
+}
+
+# `axle help`: every loaded command, by part.
+_axle_help() {
+  _axle_help_colours
+  local group name usage args alias l al a desc head
+  local -A titles=(general 'Setup' theme 'Benzene, the prompt' tool 'axle, the tool')
+  local -A rows_name rows_alias rows_args
+  local -i ncol=0 acol=0 narrow=$(( ${COLUMNS:-80} < 72 ))
+  for name in ${(k)_axle_cmd_group}; do
+    usage=${_axle_cmd_usage[$name]:-$name}
+    args=${${usage#$name}## #}
+    alias=''
+    if [[ $args == *'('[^\)]#')' ]]; then
+      alias=${${args##*\(}%\)}
+      args=${${args%\(*}%% #}
+      [[ $alias == $name ]] && alias=''
+    fi
+    rows_args[$name]=$args rows_alias[$name]=$alias
+    local -i n=$(( ${#name} + ${#alias} + ${#alias:+1} ))
+    (( n > ncol )) && ncol=n
+    (( ${#args} > acol && ${#args} <= 26 )) && acol=${#args}   # (longer: on a line of its own)
+  done
+  _axle_help_out "%B%F{$_axle_h_acc}Axle%f%b %F{$_axle_h_mut}$AXLE_VERSION · a toolkit for zsh%f"
+  for group in general theme tool; do
+    local -a names=()
+    for name in ${(ok)_axle_cmd_group}; do
+      [[ $_axle_cmd_group[$name] == $group ]] && names+=($name)
+    done
+    (( ${#names} )) || continue
+    print
+    _axle_help_rule ${titles[$group]}
+    for name in $names; do
+      alias=$rows_alias[$name] args=$rows_args[$name]
+      al='' a=''
+      [[ -n $alias ]] && al=" %F{$_axle_h_acc}$alias%f"
+      [[ -n $args ]] && a="%F{$_axle_h_arg}${args//\%/%%}%f"
+      head="  %B%F{$_axle_h_cmd}$name%f%b$al"
+      local -i pad=$(( ncol - ${#name} - ${#alias} - ${#alias:+1} ))
+      desc=$_axle_cmd_desc[$name]
+      if (( narrow )); then
+        _axle_help_out "$head $a"
+        _axle_help_wrap "$desc" $(( _axle_h_w - 6 ))
+        for l in $reply; do _axle_help_out "      %F{$_axle_h_mut}${l//\%/%%}%f"; done
+        continue
+      fi
+      local -i dcol=$(( 2 + ncol + 2 + acol + 2 ))
+      _axle_help_wrap "$desc" $(( _axle_h_w - dcol ))
+      local -a lines=($reply)
+      if (( ${#args} > acol )); then             # long arguments: the text goes below
+        _axle_help_out "$head${(l:pad:):-}  $a"
+      else
+        _axle_help_out "$head${(l:pad:):-}  $a${(l:acol-${#args}:):-}  ${lines[1]//\%/%%}"
+        shift lines
+      fi
+      for l in $lines; do _axle_help_out "${(l:dcol:):-}${l//\%/%%}"; done
+    done
+  done
+  print
+  _axle_help_out "%F{$_axle_h_mut}More on one:%f %F{$_axle_h_cmd}axle help%f %F{$_axle_h_arg}<command>%f %F{$_axle_h_mut}(or%f %F{$_axle_h_cmd}axle%f %F{$_axle_h_arg}<command>%f %F{$_axle_h_acc}--help%f%F{$_axle_h_mut}) · Tab completes everything%f"
+  if (( ! ${_axle_tool_loaded:-0} )); then
+    print
+    print -r -- "More with the axle tool: smart suggestions, jump, history search, automatic"
+    if [[ -r $AXLE_ROOT/axle.plugin.zsh ]]; then
+      print -r -- "venvs, stats, doctor. It's installed: add axle to plugins=(...), or source axle.plugin.zsh."
+    elif [[ -e $AXLE_ROOT/.git ]]; then
+      print -r -- "venvs, stats, doctor. Run $AXLE_ROOT/install.sh again and choose it."
+    else
+      print -r -- "venvs, stats, doctor. Get it with a fresh copy of Axle: $AXLE_REPO"
+    fi
+  fi
+}
+
 # `axle help <command>`.
 _axle_help_one() {
   local name=$1
@@ -74,11 +234,17 @@ _axle_help_one() {
     print -u2 -r -- "axle: no command '$name'${reply:+ — did you mean: axle ${(j:, axle :)reply[1,3]}?}"
     return 1
   fi
-  local usage=${_axle_cmd_usage[$name]:-$name}
-  _axle_printp "%Baxle ${usage//\%/%%}%b"
-  [[ -n $_axle_cmd_desc[$name] ]] && _axle_printp "%F{${_axle_c[muted]:-244}}${_axle_cmd_desc[$name]//\%/%%}%f"
+  _axle_help_colours
+  local usage=${_axle_cmd_usage[$name]:-$name} REPLY line
+  local args=${${usage#$name}## #} a=''
+  [[ -n $args ]] && a=" %F{$_axle_h_arg}${args//\%/%%}%f"
+  _axle_help_out "%B%F{$_axle_h_acc}axle%f %F{$_axle_h_cmd}$name%f%b$a"
+  [[ -n $_axle_cmd_desc[$name] ]] &&
+    _axle_help_out "%F{$_axle_h_mut}"$'%{\e[3m%}'"${_axle_cmd_desc[$name]//\%/%%}"$'%{\e[23m%}'"%f"
+  [[ -n $_axle_cmd_help[$name] ]] || return 0
   print
-  if [[ -n $_axle_cmd_help[$name] ]]; then
-    print -r -- "${_axle_cmd_help[$name]}"
-  fi
+  for line in "${(@f)_axle_cmd_help[$name]}"; do
+    _axle_help_line "$line"
+    _axle_help_out "$REPLY"
+  done
 }

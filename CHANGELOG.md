@@ -11,7 +11,23 @@ Fixed for everyone:
 - ↑ from an empty line became a search for what it had just recalled.
 - `axle config` and others failed with `setopt globsubst`.
 - `axle reload` left a shell broken when it started on a version before lazy loading.
+- Text another tool puts before the prompt (nemc's light, conda's `(base) `) pushed
+  Benzene's top line past the edge, cutting off the clock, and put `╭─` out of line with
+  `╰─`; it's now counted, and the bottom line moves over to match.
+- Ctrl-C at a question (`axle configure`, `axle config`, `axle run`, ...) printed ✗ but kept
+  waiting, so each Enter or Ctrl-C printed another; now it cancels at once.
+- `env`: `deactivate` didn't exist for a venv it turned on (it never runs `activate`, which
+  defines it); now it does, and the venv stays off until you leave the project. After
+  `exec zsh` (or in a nested shell), its venv counted as one you'd activated by hand, so it
+  was never switched off again.
 
+Also for everyone:
+- `axle help` and each command's help are styled: sections with rules, commands, aliases
+  and arguments in colour, examples with their command picked out and notes dimmed, long
+  descriptions wrapped. Plain when piped or with `NO_COLOR`. The `run` line no longer runs
+  into its description.
+
+New:
 - New module **run** (off by default while in progress; `axle module on run`):
   - Which project: the one you name (`axle run shop`, ranked by where you work, like `j`),
     a path you give, the one you're in, or else the last one you worked in (from the
@@ -54,6 +70,9 @@ Fixed for everyone:
   - Asks before a project's command runs the first time, and remembers per project and
     command; a changed package.json script asks again. `--yes` skips the question.
   - `axle run --dry-run` says which project, why, what would run and how.
+  - A missing program (pnpm, cargo, ...) is said before anything is asked, with how to
+    install it; answering no to "Run <last project>?" leaves you where you were, and
+    from a folder with nothing to run it says so before offering that project.
 - Shared helpers, so each works without the other part: project markers and venv finding
   (`lib/project.zsh`, used by Benzene, `env` and `run`), and `j`'s folder ranking
   (`lib/rank.zsh`, used by `j` and `run`). Both load on first use.

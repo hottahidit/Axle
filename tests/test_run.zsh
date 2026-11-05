@@ -225,6 +225,44 @@ test_run_from_home_returns_to_last_project() {
   assert_contains "$out" "run    "
 }
 
+test_run_no_to_last_project_stays_put() {
+  AXLE_MODULES=(run) load_tool
+  fixtures
+  hist 60 $T/fx/py-entry
+  cd $HOME
+  axle_confirm() { return 1 }                     # answering no
+  local out
+  out=$(axle run </dev/null 2>&1; print "pwd=$PWD")
+  assert_contains "$out" "pwd=$HOME" "no: you stay where you were"
+  mkdir -p $T/empty && cd $T/empty
+  out=$(axle run </dev/null 2>&1)
+  local REPLY; nocolor "$out"; out=$REPLY
+  assert_contains "$out" "Nothing to run in $T/empty (it's empty)." "says why it goes elsewhere"
+  print x > $T/empty/notes.txt
+  out=$(axle run </dev/null 2>&1); nocolor "$out"; out=$REPLY
+  assert_contains "$out" "(no project files)."
+  cd $HOME
+  out=$(axle run </dev/null 2>&1)
+  [[ $out == *Nothing\ to\ run* ]] && fail "not from ~: $out"
+  return 0
+}
+
+test_run_missing_program_said_before_asking() {
+  AXLE_MODULES=(run) load_tool
+  fixtures
+  axle_confirm() { print -r -- "ASKED $1"; return 0 }
+  path=(${path:#*/node*})
+  if whence -p pnpm >/dev/null; then return 0; fi   # (pnpm installed here: nothing to check)
+  local out
+  out=$(cd $T/fx/vite && axle run --fg 2>&1); local st=$?
+  (( st )) || fail "it doesn't run: $out"
+  local REPLY; nocolor "$out"; out=$REPLY
+  assert_contains "$out" "vite runs with pnpm, which isn't installed: "
+  [[ $out == *"command not found"* ]] && fail "not a raw shell error: $out"
+  [[ $out == *ASKED* ]] && fail "said before asking to trust it: $out"
+  return 0
+}
+
 test_run_static_folder_without_marker() {
   AXLE_MODULES=(run) load_tool
   fixtures

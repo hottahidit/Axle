@@ -676,6 +676,7 @@ and the size.
 When you `cd` into a project with its own virtualenv (`.venv`, `venv`, `env`), it's activated; when
 you leave, or enter a project with a different one, it's switched or deactivated, with one quiet
 line saying so (`AXLE_ENV_QUIET=1` silences it). A venv you activated yourself is left alone.
+`deactivate` turns it off as usual; it stays off until you leave the project.
 
 It never runs the venv's `activate` script, which a cloned repository could ship with anything in
 it: it sets `VIRTUAL_ENV` and puts the venv's `bin/` first on `PATH`, and undoes exactly that.

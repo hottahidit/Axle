@@ -1217,8 +1217,17 @@ _axle_layout() {
   [[ -n $_axle_bottom ]] || return 0    # one-line layouts set _axle_ps1 themselves
   local -i cols=${COLUMNS:-80}
   (( cols > 0 )) || cols=80
+  # Something another tool put before Benzene in PROMPT (conda's "(base) ", nemc's light)
+  # takes columns from the top line, and pushes ╭─ out of line with ╰─. It's measured as it is now: only its variables are
+  # read, and nothing in it runs (one with $(…) or `…` isn't measured).
+  local -i pre=0
+  local before=${PROMPT%%'%{${_axle_mark_a}%}'*}
+  if [[ -n $before && $before != $PROMPT && $before != *('$('|'`')* ]]; then
+    before=${(e)before}
+    _axle_width ${before##*$'\n'}; pre=$REPLY
+  fi
   # -1: writing the last column would make some terminals wrap early.
-  local -i gap=$(( cols - _axle_top_lw - _axle_top_rw - 1 ))
+  local -i gap=$(( cols - pre - _axle_top_lw - _axle_top_rw - 1 ))
   local top=$_axle_top_l
   if [[ -n $_axle_top_r ]]; then
     if (( gap >= 2 )); then
@@ -1230,7 +1239,8 @@ _axle_layout() {
   # The top line can never wrap: auto-wrap (DECAWM) is off while it's drawn, so if a
   # terminal draws some glyph wider than computed, the line is clipped at the edge
   # instead of spilling onto a new line. It's back on before the input line.
-  _axle_ps1="%{"$'\e[?7l'"%}$top%{"$'\e[?7h'"%}"$'\n'"$_axle_bottom"
+  # The bottom line moves over by as much, so ╰─ stays under ╭─.
+  _axle_ps1="%{"$'\e[?7l'"%}$top%{"$'\e[?7h'"%}"$'\n'"${(l:pre:):-}$_axle_bottom"
   return 0
 }
 functions -M axle_layout 0 0 _axle_layout

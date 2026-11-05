@@ -13,9 +13,20 @@
 _axle_ui_tty() { [[ -t 0 && -t 1 ]] }
 
 # One key, with arrow keys decoded (REPLY = up|down|left|right|enter|space|esc|tab|<char>).
+# Ctrl-C reads as Esc. While waiting for the key it's an ordinary key (stty -isig): as a
+# signal, some terminals' reads carry on after the trap, so the cancel waited for another
+# key. The questions' INT trap only sets _axle_ui_int, as a fallback (a `return` in a trap
+# would leave this function, not the question, which then kept waiting).
+typeset -gi _axle_ui_int=0
 _axle_ui_key() {
   local k k2 k3
-  read -rsk1 k || { REPLY=esc; return }
+  _axle_ui_int=0
+  command stty -isig 2>/dev/null
+  read -rsk1 k
+  local -i st=$?
+  command stty isig 2>/dev/null
+  (( st )) && { REPLY=esc; return }
+  (( _axle_ui_int )) && { REPLY=esc; return }
   case $k in
     $'\e')
       if read -rsk1 -t 0.05 k2 && [[ $k2 == ('['|O) ]] && read -rsk1 -t 0.05 k3; then
@@ -74,7 +85,7 @@ axle_select() {
   (( cur )) || cur=1
   if ! _axle_ui_tty; then REPLY=${values[cur]}; return 0; fi
   setopt localoptions localtraps
-  trap '_axle_ui_done "$q" "" cancel; return 1' INT
+  trap '_axle_ui_int=1' INT                  # read as Esc by _axle_ui_key
   local hint="%F{${_axle_c[muted]:-244}}(↑↓ move · Enter choose · Esc cancel)%f" a=${_axle_c[accent]:-magenta}
   local -a block
   local -i i
@@ -108,7 +119,7 @@ axle_checkbox() {
   local -i n=${#labels} cur=1
   if ! _axle_ui_tty; then reply=($on); return 0; fi
   setopt localoptions localtraps
-  trap '_axle_ui_done "$q" "" cancel; return 1' INT
+  trap '_axle_ui_int=1' INT                  # read as Esc by _axle_ui_key
   local hint="%F{${_axle_c[muted]:-244}}(↑↓ move · Space tick · a all · Enter done)%f" a=${_axle_c[accent]:-magenta}
   local -a block
   local -i i
@@ -147,7 +158,7 @@ axle_confirm() {
   local q=$1 def=${2:-n}
   if ! _axle_ui_tty; then [[ $def == y ]]; return; fi
   setopt localoptions localtraps
-  trap '_axle_ui_done "$q" "" cancel; return 1' INT
+  trap '_axle_ui_int=1' INT                  # read as Esc by _axle_ui_key
   local hint='(y/N)'; [[ $def == y ]] && hint='(Y/n)'
   _axle_ui_drawn=0
   _axle_ui_draw "%F{${_axle_c[accent]:-magenta}}?%f %B${q//\%/%%}%b %F{${_axle_c[muted]:-244}}$hint%f"
