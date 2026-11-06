@@ -1233,6 +1233,8 @@ test_run_on_exit_stop() {
   zpty -d sh 2>/dev/null                         # close the terminal
   for i in {1..60}; do kill -0 $pid 2>/dev/null || break; sleep 0.1; done
   kill -0 $pid 2>/dev/null && fail "the service stops with its terminal"
+  # (its supervisor clears the state once the service is gone: a moment later)
+  for i in {1..50}; do [[ -e $HOME/.local/state/axle/run/services/web ]] || break; sleep 0.1; done
   [[ -e $HOME/.local/state/axle/run/services/web ]] && fail "and leaves nothing"
   return 0
 }
