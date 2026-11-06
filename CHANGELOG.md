@@ -1,5 +1,22 @@
 # Changelog
 
+## nemc compat 0.2.0 (branch `MnemoCetus`)
+
+- **`nemc` runs through Axle.** Type `nemc` as usual (same arguments, same output); Axle runs it,
+  so:
+  - the prompt reads every folder's state again right after (a `nemc scan ~/repos` from `~`
+    updates `~/repos/shop`'s light at once, not after `AXLE_NEMC_TTL`)
+  - hook events `nemc-start` (its arguments) and `nemc-done` (exit code, then its arguments):
+    `axle hook nemc-done my_function`
+  - it never runs a `nemc` that came with a project (below); it uses yours and says so
+  `command nemc` skips Axle, as does `AXLE_NEMC=0`. `axle nemc` stays, the same thing listed in
+  `axle help`. `axle doctor` warns about an alias `nemc` that would skip it.
+- Hook events can come from any part of Axle now (`axle hook` and its Tab completion list them).
+- Security: the prompt, `axle nemc` and `axle doctor` never run a `nemc` that came with a
+  project. The env module puts a project's `.venv/bin` first on PATH when you cd in, so a
+  cloned repo shipping `.venv/bin/nemc` (or a relative PATH entry like `.`) would have been
+  run at the next prompt. They use the installed one past it, or none.
+
 ## nemc compat 0.1.3 (branch `MnemoCetus`)
 
 - Tests: the wizard test sends one key per fully drawn screen, so a slow machine (macOS CI)

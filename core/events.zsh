@@ -20,7 +20,9 @@
 zmodload zsh/datetime 2>/dev/null
 autoload -Uz add-zsh-hook
 
-for _axle_e in command_start command_done prompt expand dir; do
+# The events; other parts of axle may add theirs (before or after this file loads).
+typeset -gaU _axle_hook_events=(command-start command-done prompt expand dir $_axle_hook_events)
+for _axle_e in ${_axle_hook_events//-/_}; do
   (( ${(P)+${:-_axle_hook_$_axle_e}} )) || typeset -ga _axle_hook_$_axle_e
 done
 unset _axle_e
@@ -38,7 +40,7 @@ _axle_emit() {
 }
 
 _axle_hook_cmd() {
-  local -a events=(command-start command-done prompt expand dir)
+  local -a events=($_axle_hook_events)
   case $1 in
     ls)
       local e var

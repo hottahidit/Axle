@@ -51,6 +51,8 @@ _axle_complete() {
     hook)
       local -a events=('command-start:before a command runs' 'command-done:after it finishes'
                        'prompt:before each prompt' 'expand:Alt-i toggled' 'dir:the directory changed')
+      local e; for e in ${_axle_hook_events:#(command-start|command-done|prompt|expand|dir)}; do
+        events+=("$e:${_axle_hook_about[$e]:-}"); done
       case $CURRENT in
         3) _describe -t events event events; compadd -- ls rm ;;
         4) if [[ $words[3] == rm ]]; then _describe -t events event events

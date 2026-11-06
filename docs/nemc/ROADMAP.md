@@ -29,6 +29,8 @@ Commits are `(MnemoCetus)vX.Y.Z - Title`, numbered by the branch's own progress 
 
 ## Done
 
+- **v0.2.0:** `nemc` itself runs through Axle (prompt refresh, hook events `nemc-start` /
+  `nemc-done`); never runs a `nemc` that came with a project (its `.venv`, or `.` on PATH).
 - **v0.1.3:** the wizard test no longer races on slow machines (macOS CI).
 - **v0.1.2:** the wizard offers the segment; `axle preview` shows its states.
 - **v0.1.1:** tested with real uv and pipx installs; clearer installer and update messages.

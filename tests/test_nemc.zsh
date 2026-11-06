@@ -9,6 +9,7 @@ echo "\$*" >> $T/nemc.log
 case "\$1" in
   --version) echo "MnemoCetus ${1:-1.0.0}" ;;
   status) cat $T/answer 2>/dev/null ;;
+  fail) exit 3 ;;
 esac
 EOF
   chmod +x $T/bin/nemc
@@ -33,6 +34,60 @@ test_axle_nemc_without_nemc_says_how() {
   load_tool
   local out=$(axle nemc scan 2>&1)
   assert_contains "$out" "install.sh --nemc" "says how to get it"
+  out=$(nemc scan 2>&1)
+  assert_eq "$?" 127 "typed nemc: not found"
+  assert_contains "$out" "install.sh --nemc" "typed nemc: says how to get it"
+}
+
+test_typing_nemc_goes_through_axle() {
+  _fake_nemc
+  load_tool; load_theme
+  (( $+functions[nemc] )) || fail "nemc is axle's"
+  nemc scan ~/x --json
+  assert_eq "$(<$T/nemc.log)" "scan $HOME/x --json" "arguments reach nemc untouched"
+  : > $T/nemc.log
+  nemc
+  assert_eq "$(<$T/nemc.log)" "" "no command: nemc's own menu, not status"
+  nemc fail
+  assert_eq "$?" 3 "nemc's exit code"
+  _axle_nemc_age=([$T]=$EPOCHSECONDS [/elsewhere]=$EPOCHSECONDS)
+  nemc projects
+  assert_eq "${#_axle_nemc_age}" 0 "the prompt reads every folder again"
+}
+
+test_nemc_hook_events() {
+  _fake_nemc
+  load_tool
+  started() { print -r -- "start $*" >> $T/hooks }
+  finished() { print -r -- "done $*" >> $T/hooks }
+  axle hook nemc-start started || fail "nemc-start is an event"
+  axle hook nemc-done finished || fail "nemc-done is an event"
+  assert_contains "$(axle hook ls)" "nemc-done" "listed"
+  nemc fail --json
+  assert_eq "$(<$T/hooks)" $'start fail --json\ndone 3 fail --json' "arguments; exit code first when done"
+  : > $T/hooks; _answer clean
+  axle nemc >/dev/null
+  assert_eq "$(<$T/hooks)" $'start status\ndone 0 status' "axle nemc fires them too"
+}
+
+test_nemc_off_skips_axle() {
+  _fake_nemc
+  load_tool
+  finished() { print -r -- "done $*" >> $T/hooks }
+  axle hook nemc-done finished
+  AXLE_NEMC=0
+  _axle_nemc_age=([$T]=$EPOCHSECONDS)
+  nemc scan .
+  assert_eq "$(<$T/nemc.log)" "scan ." "still nemc"
+  [[ ! -e $T/hooks ]] || fail "no events"
+  assert_eq "${#_axle_nemc_age}" 1 "the prompt isn't touched"
+}
+
+test_nemc_without_the_tool() {
+  _fake_nemc
+  load_theme                                     # Benzene alone: no hooks API
+  nemc scan .
+  assert_eq "$(<$T/nemc.log)" "scan ." "runs"
 }
 
 test_worker_reads_the_state() {
@@ -45,6 +100,68 @@ test_worker_reads_the_state() {
   print 'not json' > $T/answer
   _axle_nemc_take "$(_axle_nemc_worker $T)"
   assert_eq "$_axle_nemc_state[$T]" ":0" "garbage: no state, no error"
+}
+
+# A cloned project can ship .venv/bin/nemc; the env module puts that first on PATH when you
+# cd in. The prompt (and axle nemc) must never run it.
+_planted_project() {
+  mkdir -p $T/evil/.venv/bin
+  print 'home = /usr/bin' > $T/evil/.venv/pyvenv.cfg
+  print -r -- "#!/bin/sh
+touch $T/planted-ran" > $T/evil/.venv/bin/nemc
+  chmod +x $T/evil/.venv/bin/nemc
+}
+
+test_a_projects_own_nemc_is_never_run() {
+  _fake_nemc
+  load_tool; load_theme
+  _planted_project
+  _answer changed
+  cd $T/evil; _axle_env_sync >/dev/null
+  assert_eq "$commands[nemc]" "$T/evil/.venv/bin/nemc" "(the planted one is first on PATH)"
+  local REPLY
+  _axle_nemc_bin || fail "the installed nemc is found past it"
+  assert_eq "$REPLY" "$T/bin/nemc" "the installed one"
+  _axle_nemc_take "$(_axle_nemc_worker $PWD)"
+  assert_eq "$_axle_nemc_state[$PWD]" "changed:0" "the prompt reads the installed one"
+  axle nemc >/dev/null 2>&1
+  local said=$(nemc projects 2>&1)
+  assert_contains "$said" "not this project's" "typed nemc: says which one it runs"
+  assert_eq "${$(<$T/nemc.log)##*$'\n'}" "projects" "typed nemc: the installed one"
+  assert_contains "$(axle doctor)" "(compat $AXLE_NEMC_COMPAT)" "doctor asks the installed one"
+  [[ ! -e $T/planted-ran ]] || fail "the project's nemc was run"
+  # Only the planted one: nothing runs, and axle nemc says why.
+  path=($T/evil/.venv/bin /usr/bin /bin); rehash
+  _axle_nemc_bin && fail "no trusted nemc: $REPLY"
+  _axle_nemc_age=()
+  _axle_nemc_precmd
+  [[ -z $_axle_nemc_fd ]] || fail "no worker started"
+  local out=$(axle nemc 2>&1)
+  assert_contains "$out" "came with this project" "axle nemc says why"
+  out=$(nemc 2>&1)
+  assert_contains "$out" "came with this project" "typed nemc says why"
+  assert_contains "$(axle doctor)" "came with this project" "doctor says why"
+  [[ ! -e $T/planted-ran ]] || fail "the project's nemc was run"
+  # Leaving the project: the installed one again.
+  _fake_nemc
+  cd $T; _axle_env_sync >/dev/null
+  _axle_nemc_bin && assert_eq "$REPLY" "$T/bin/nemc" "outside it" || fail "outside it"
+}
+
+test_a_relative_path_entry_is_never_used() {
+  mkdir -p $T/here
+  print -r -- "#!/bin/sh
+touch $T/planted-ran" > $T/here/nemc
+  chmod +x $T/here/nemc
+  load_theme
+  cd $T/here
+  path=(. /usr/bin /bin); rehash
+  local REPLY
+  _axle_nemc_bin && fail "a nemc from '.' isn't used: $REPLY"
+  _fake_nemc; path=(. $path); rehash
+  _axle_nemc_bin && assert_eq "$REPLY" "$T/bin/nemc" "the one past it" || fail "the one past it"
+  _axle_nemc_worker $PWD >/dev/null
+  [[ ! -e $T/planted-ran ]] || fail "./nemc was run"
 }
 
 test_segment_per_state() {
@@ -112,10 +229,15 @@ test_commands_that_change_it_read_it_again() {
   _axle_nemc_preexec 'ls -la'
   assert_eq "$_axle_nemc_age[$PWD]" "$EPOCHSECONDS" "ls changes nothing"
   local c
-  for c in 'git commit -m x' 'nemc scan .' 'axle nemc rescan' 'git pull'; do
+  for c in 'git commit -m x' 'git pull'; do
     _axle_nemc_age[$PWD]=$EPOCHSECONDS
     _axle_nemc_preexec "$c"
-    assert_eq "$_axle_nemc_age[$PWD]" 0 "$c"
+    assert_eq "$_axle_nemc_age[$PWD]" 0 "$c: this folder"
+  done
+  for c in 'nemc scan ~/repos' 'command nemc rescan' 'nemc'; do
+    _axle_nemc_age=([$PWD]=$EPOCHSECONDS [/elsewhere]=$EPOCHSECONDS)
+    _axle_nemc_preexec "$c"
+    assert_eq "${#_axle_nemc_age}" 0 "$c: every folder"
   done
   _axle_nemc_age[$PWD]=$EPOCHSECONDS
   _axle_nemc_preexec 'nemcfoo'
@@ -128,6 +250,8 @@ test_doctor_reports_it() {
   assert_contains "$(axle doctor)" "MnemoCetus not found" "missing"
   _fake_nemc
   assert_contains "$(axle doctor)" "(compat $AXLE_NEMC_COMPAT)" "found"
+  alias nemc='nemc --db /tmp/x'
+  assert_contains "$(axle doctor)" "skips axle's nemc" "an alias that skips it"
 }
 
 # --- install.sh --------------------------------------------------------------------

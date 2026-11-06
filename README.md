@@ -2,8 +2,8 @@
 
 > **Why this branch exists:** [MnemoCetus](https://github.com/hottahidit/MnemoCetus) is a separate
 > project that scans your projects, and it works well alongside Axle. Rather than fold it into Axle,
-> this long-lived branch keeps following `main` and adds what connects the two: the `axle nemc`
-> command and MnemoCetus's state in the Benzene prompt. `install.sh` moves you here if you choose
+> this long-lived branch keeps following `main` and adds what connects the two: `nemc` runs through Axle
+> (the prompt follows it, hook events, `axle nemc`) and MnemoCetus's state is in the Benzene prompt. `install.sh` moves you here if you choose
 > MnemoCetus during setup. Without MnemoCetus, this branch behaves like `main`.
 
 **Axle** is a toolkit for zsh: smart suggestions as you type, `j` to jump to the folder you mean,
