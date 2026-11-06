@@ -287,6 +287,10 @@ _axle_run_supervise() {
   local -a cmd=("$@")
   typeset -g _axle_run_dir=${dir:h:h}
   trap '' HUP INT QUIT TTOU TTIN                   # keeps running when the terminal closes
+  # Killing the supervisor (by hand, from a process list: its command line has the
+  # project's name, the service's often doesn't) stops the service, as `axle run stop`.
+  local -i spid=0
+  trap '_axle_run_sup_term; exit 0' TERM
   # AXLE_RUN_DEBUG: a trace of the supervisor in <dir>/trace (the tests turn it on).
   if [[ -n $AXLE_RUN_DEBUG ]]; then exec 2>>$dir/trace; setopt xtrace; fi
   _axle_run_put $dir watcher $$
@@ -298,10 +302,11 @@ _axle_run_supervise() {
   [[ -n $port ]] && export PORT=$port
   for e in $envs; do export "$e"; done             # .env values (data) and ours, as given
   "${cmd[@]}" 2>&1 &                               # (its errors to the log too)
-  local -i spid=$!
+  spid=$!
   _axle_run_pstart $spid && _axle_run_put $dir pstart $REPLY
   _axle_run_put $dir pid $spid
-  _axle_run_drop $name starting '' '' $$
+  # The tab lives as long as the service (not this supervisor, which could be killed).
+  _axle_run_drop $name starting '' '' $spid
 
   # Until it answers: the port it printed in its log (a dev server may pick the next
   # free one), else the one detected.
@@ -315,7 +320,7 @@ _axle_run_supervise() {
       _axle_run_put $dir port $port
       _axle_run_put $dir url $url
       _axle_run_put $dir state up
-      _axle_run_drop $name up $port $url $$
+      _axle_run_drop $name up $port $url $spid
       break
     fi
     zselect -t 25
@@ -323,13 +328,36 @@ _axle_run_supervise() {
   wait $spid
   local -i code=$?
   [[ -e $dir/stopping || ! -d $dir ]] && return 0
-  if (( code == 0 )); then
-    _axle_run_forget $name                          # it finished on its own: nothing to show
+  if (( code == 0 || code == 130 || code == 143 )); then
+    _axle_run_forget $name          # it finished, or was stopped (INT, TERM): nothing to show
   else
     _axle_run_put $dir state crashed
     _axle_run_put $dir code $code
     _axle_run_drop $name crashed '' '' '' $code
   fi
+}
+
+# The supervisor got TERM (its variables in scope): stop the service and everything it
+# started, then forget it. `axle run stop` sends it TERM too, and does that itself.
+_axle_run_sup_term() {
+  [[ -e $dir/stopping || ! -d $dir ]] && return 0
+  : >| $dir/stopping
+  if (( spid )); then
+    local -a reply left
+    local pid
+    _axle_run_tree $spid
+    local -a pids=($reply)
+    kill -TERM $pids 2>/dev/null
+    local -i i
+    for i in {1..50}; do                           # up to 5 s, then forced
+      left=()
+      for pid in $pids; do kill -0 $pid 2>/dev/null && left+=($pid); done
+      (( ${#left} )) || break
+      zselect -t 10
+    done
+    (( ${#left} )) && kill -KILL $left 2>/dev/null
+  fi
+  _axle_run_forget $name
 }
 
 # --- the commands -----------------------------------------------------------------------

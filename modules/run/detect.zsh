@@ -13,7 +13,8 @@
 #                       part of what trust remembers: if it changes, `axle run` asks again
 #     _axle_run_portway how its port can be changed (for a busy port): flag:<flag>,
 #                       script:<flag> (a package.json script's), django, last (the last
-#                       word), env:<VAR>, or empty (it can't be)
+#                       word), env:<VAR>, python (a file that starts its own server:
+#                       its run() call is given the port), or empty (it can't be)
 #     _axle_run_env     extra environment for it (NAME=value), e.g. a changed port
 
 # A file's text into REPLY, if it's a regular file under 256 KB. No subprocess.
@@ -322,7 +323,12 @@ _axle_run_detect_python() {
           break
         fi
       done
-      (( envport )) || { _axle_run_code_port "$text" && port=$REPLY }
+      # Otherwise its server's run() is given the port when it's called (python: see
+      # modules/run/py/sitecustomize.py); the file itself is never changed.
+      (( envport )) || { _axle_run_portway=python; _axle_run_code_port "$text" && port=$REPLY }
+      # The same hook lets Flask-SocketIO's dev server start without a terminal (it
+      # refuses when stdin isn't one, as in the background).
+      _axle_run_env+=(PYTHONPATH=$AXLE_ROOT/modules/run/py${PYTHONPATH:+:$PYTHONPATH})
       _axle_run_set service $port "python · $fw" "$rel starts itself"
       return 0
     fi

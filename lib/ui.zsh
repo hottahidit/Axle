@@ -3,11 +3,11 @@
 #
 #   axle_select   <question> <default value> <label:value>...   choice in REPLY
 #   axle_checkbox <question> <values on> <label:value>...       choices in reply=()
-#   axle_confirm  <question> [y|n]                               status 0 = yes
+#   axle_confirm  <question> [y|n]                    status 0 = yes, 1 = no, 2 = cancelled
 #   axle_input    <question> [default]                           text in REPLY
 #
 # ↑/↓ (or k/j, or a number) move, Space ticks a box, Enter answers, Esc / q / Ctrl-C
-# cancels (status 1). The question then shrinks to one line with the answer, like
+# cancels (status 1; axle_confirm: 2, as 1 is no). The question then shrinks to one line with the answer, like
 # questionary. Without a terminal (a script, a pipe) the default is taken.
 
 _axle_ui_tty() { [[ -t 0 && -t 1 ]] }
@@ -169,7 +169,7 @@ axle_confirm() {
       y|Y)   answer=y; break ;;
       n|N)   answer=n; break ;;
       enter) break ;;
-      esc|q) _axle_ui_done "$q" "" cancel; return 1 ;;
+      esc|q) _axle_ui_done "$q" "" cancel; return 2 ;;
     esac
   done
   _axle_ui_done "$q" "${${answer:#n}:+Yes}${${answer:#y}:+No}"

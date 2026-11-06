@@ -92,6 +92,10 @@ _axle_run_apply_port() {
       else _axle_run_cmd[i,i]=(runserver $port); fi ;;
     last)
       _axle_run_cmd[-1]=$port ;;
+    python)                                        # modules/run/py/sitecustomize.py
+      local hook=PYTHONPATH=$AXLE_ROOT/modules/run/py
+      _axle_run_env=(${_axle_run_env:#AXLE_RUN_PORT=*} AXLE_RUN_PORT=$port)
+      [[ -n ${(M)_axle_run_env:#$hook*} ]] || _axle_run_env+=($hook${PYTHONPATH:+:$PYTHONPATH}) ;;
     env:*)
       local var=${way#env:}
       _axle_run_env=(${_axle_run_env:#$var=*} $var=$port) ;;
@@ -119,6 +123,8 @@ _axle_run_resolve_port() {
   local next=''
   [[ -n $_axle_run_portway ]] && _axle_run_free_port $port && next=$_axle_run_freed
   _axle_printp "%F{$warn}!%f Port $port is taken by ${who//\%/%%}."
+  [[ -z $next && -z $_axle_run_portway ]] &&
+    _axle_printp "%F{$muted}  (its command can't be given another port)%f"
   local -a opts=()
   [[ -n $next ]]  && opts+=("Use port $next instead:next")
   [[ -n $other ]] && opts+=("Stop $other, then run here:stop")

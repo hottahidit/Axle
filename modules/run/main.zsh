@@ -56,6 +56,32 @@ _axle_run_last() {
   [[ -n $REPLY ]]
 }
 
+# After "no" to the last project: the others you worked in lately, to pick one from
+# (REPLY = its root). Returns 1 when there are none or you pick none.
+_axle_run_other() {
+  local here='' r                                  # (REPLY: the answer)
+  local -a reply roots=() opts=()
+  _axle_project_root && here=$reply[1]
+  _axle_run_recent || return 1
+  for r in $reply; do
+    [[ $r == "$1" || $r == "$here" ]] || roots+=($r)
+  done
+  roots=(${roots[1,8]})
+  (( ${#roots} )) || return 1
+  local -i i w=8
+  for r in $roots; do (( ${#r:t} > w )) && w=${#r:t}; done
+  (( w > 24 )) && w=24
+  for i in {1..${#roots}}; do
+    r=$roots[i]
+    _axle_run_ago ${_axle_run_when[$r]}
+    opts+=("${(r:w:)${r:t}}  ${${r:h}/#$HOME/~} · $REPLY:$i")
+  done
+  opts+=("None, stay here:0")
+  axle_select "Run another project?" 1 $opts || return 1
+  (( REPLY )) || return 1
+  REPLY=$roots[REPLY]
+}
+
 # How long ago an epoch was, in words (REPLY): "just now", "5m ago", "2h ago", "3d ago".
 _axle_run_ago() {
   local -i s=$(( EPOCHSECONDS - $1 ))
@@ -140,7 +166,9 @@ _axle_run_pick() {
 
 # The trust key of the detected command (REPLY).
 _axle_run_trust_key() {
-  _axle_run_hash "$1"$'\0'"${(j:\0:)_axle_run_cmd}"$'\0'"$_axle_run_source" || return 1
+  # The command as detected: another port chosen for this run doesn't make it a new one.
+  local -a cmd=(${_axle_run_cmd_detected:-$_axle_run_cmd})
+  _axle_run_hash "$1"$'\0'"${(j:\0:)cmd}"$'\0'"$_axle_run_source" || return 1
   REPLY="$1"$'\t'"$REPLY"
 }
 
@@ -218,6 +246,21 @@ _axle_run_exec() {
   )
 }
 
+# Before a part runs: a missing program, then (a service) a taken port, then the first-run
+# question. Returns 1 to skip it.
+_axle_run_ready() {
+  local dir=$1 name=$2 yes=$3
+  _axle_run_installed $dir $name || return 1
+  if [[ $_axle_run_kind == service ]]; then
+    typeset -ga _axle_run_cmd_detected=($_axle_run_cmd)
+    _axle_run_resolve_port $dir $name || return 1
+  fi
+  _axle_run_approve $dir $name $yes
+  local -i st=$?
+  typeset -ga _axle_run_cmd_detected=()
+  return $st
+}
+
 # --- one part ------------------------------------------------------------------------------
 
 # Show the detected command and ask, the first time this project (part) runs it.
@@ -285,8 +328,9 @@ _axle_run_choose_venv() {
 # The ▶ line: the command about to run (and what axle run adds to its environment).
 _axle_run_say_cmd() {
   local REPLY
+  local -a shown=(${_axle_run_env:#PYTHONPATH=$AXLE_ROOT/modules/run/py*})   # (our hook)
   _axle_run_show $1
-  _axle_printp "%F{${_axle_c[muted]:-244}}▶ ${REPLY//\%/%%}${_axle_run_env:+ (${(j:, :)_axle_run_env})}%f"
+  _axle_printp "%F{${_axle_c[muted]:-244}}▶ ${REPLY//\%/%%}${shown:+ (${(j:, :)shown})}%f"
 }
 
 # docker compose: `up -d` in the foreground (it detaches its containers), then remember
@@ -437,9 +481,17 @@ _axle_cmd_run() {
   if [[ $_axle_run_from == last ]] && (( ! yes )); then
     local -a names=()
     for p in $chosen; do _axle_run_partname $root $p; names+=($REPLY); done
-    if ! axle_confirm "Run ${(j:, :)names}?" y; then
-      cd -- $from                                  # no: you stay where you were
-      return 0
+    axle_confirm "Run ${(j:, :)names}?" y
+    local -i said=$?
+    if (( said )); then
+      cd -- $from                                  # no: you stay where you were,
+      (( said == 1 )) || return 0                  # (Esc, Ctrl-C: that's all)
+      _axle_run_other $root || return 0            # and may pick another project
+      local -a again=()
+      [[ -n $mode ]] && again+=(--$mode)
+      (( config )) && again+=(--config)
+      _axle_cmd_run $again -- $REPLY
+      return
     fi
   fi
 
@@ -458,8 +510,7 @@ _axle_cmd_run() {
     fi
     if (( ${vparts[(Ie)$p]} )); then
       if (( tmux )); then
-        _axle_run_approve $dir $svc $yes || { failed+=($svc); continue }
-        [[ $_axle_run_kind == service ]] && { _axle_run_resolve_port $dir $svc || { failed+=($svc); continue } }
+        _axle_run_ready $dir $svc $yes || { failed+=($svc); continue }
         _axle_run_say_cmd $dir
         if _axle_run_tmux $dir $svc; then sessions+=($svc); else failed+=($svc); fi
       else
@@ -480,8 +531,7 @@ _axle_cmd_run() {
       _axle_run_approve $dir $svc $yes || { failed+=($svc); continue }
       _axle_run_compose_up $dir $svc || failed+=($svc)
     elif (( bg )); then
-      _axle_run_approve $dir $svc $yes || { failed+=($svc); continue }
-      _axle_run_resolve_port $dir $svc || { failed+=($svc); continue }
+      _axle_run_ready $dir $svc $yes || { failed+=($svc); continue }
       _axle_run_say_cmd $dir
       _axle_run_bg $dir $svc || failed+=($svc)
     else
@@ -505,8 +555,7 @@ _axle_cmd_run() {
     dir=$root${${fg:#.}:+/$fg}
     _axle_run_partname $root $fg; svc=$REPLY
     _axle_run_detect $dir || return 1
-    _axle_run_approve $dir $svc $yes || return 1
-    [[ $_axle_run_kind == service ]] && { _axle_run_resolve_port $dir $svc || return 1 }
+    _axle_run_ready $dir $svc $yes || return 1
     _axle_run_say_cmd $dir
     _axle_run_exec $dir
     return

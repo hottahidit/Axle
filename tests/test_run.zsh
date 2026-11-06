@@ -231,6 +231,7 @@ test_run_no_to_last_project_stays_put() {
   hist 60 $T/fx/py-entry
   cd $HOME
   axle_confirm() { return 1 }                     # answering no
+  axle_select() { return 1 }                      # (and to "Run another project?")
   local out
   out=$(axle run </dev/null 2>&1; print "pwd=$PWD")
   assert_contains "$out" "pwd=$HOME" "no: you stay where you were"
@@ -244,6 +245,35 @@ test_run_no_to_last_project_stays_put() {
   cd $HOME
   out=$(axle run </dev/null 2>&1)
   [[ $out == *Nothing\ to\ run* ]] && fail "not from ~: $out"
+  return 0
+}
+
+# No to the last project lists the others you worked in lately; one picked runs. Esc
+# (or Ctrl-C) at the question is just a cancel: no list.
+test_run_no_offers_other_recent_projects() {
+  AXLE_MODULES=(run) load_tool
+  local p
+  for p in older newer; do
+    mkdir -p $T/$p; print '[project]' > $T/$p/pyproject.toml
+    print "print('hello from $p')" > $T/$p/main.py
+  done
+  mkdir -p $T/gone; hist 300 $T/gone; rmdir $T/gone  # (gone: not offered)
+  hist 200 $T/older; hist 100 $T/newer
+  cd $HOME
+  axle_confirm() { [[ $1 == Run\ newer* ]] && return 1; return 0 }
+  axle_select() { print -r -- "OFFERED $1 ${(j:|:)@[3,-1]}"; REPLY=1 }
+  local out REPLY
+  out=$(axle run --fg </dev/null 2>&1; print "pwd=$PWD"); nocolor "$out"; out=$REPLY
+  assert_contains "$out" "OFFERED Run another project?" "a list after no"
+  assert_match "$out" "*|older  * · 3m ago:1|None, stay here:0*" "the others, with when"
+  local offered=${(M)${(f)out}:#OFFERED*}
+  [[ $offered == *newer* ]] && fail "not the one just declined: $offered"
+  [[ $offered == *gone* ]] && fail "not a folder that's gone: $offered"
+  assert_contains "$out" "hello from older" "the one picked runs"
+  assert_contains "$out" "pwd=$T/older" "from its folder"
+  axle_confirm() { return 2 }                     # Esc
+  out=$(axle run --fg </dev/null 2>&1)
+  [[ $out == *OFFERED* ]] && fail "Esc offers nothing: $out"
   return 0
 }
 
@@ -360,7 +390,7 @@ test_run_service_lifecycle() {
   assert_contains "$(<$drop)" "icon=⚡" "a ⚡ drop"
   assert_contains "$(<$drop)" "text=web :$port" "with its port"
   assert_contains "$(<$drop)" $'\nlink=http://localhost:'$port "and a link"
-  assert_contains "$(<$drop)" $'\npid='"$(<$dir/watcher)"$'\n' "and the pid it lives with"
+  assert_contains "$(<$drop)" $'\npid='"$pid"$'\n' "and the pid it lives with (the service's)"
   local out
   out=$(cd $T/web && axle run ls)
   assert_match "$out" "*web*up*$port*http://localhost:$port*" "ls shows it"
@@ -374,6 +404,41 @@ test_run_service_lifecycle() {
   sleep 0.2
   kill -0 $pid 2>/dev/null && fail "the process is gone"
   [[ -e $dir || -e $drop ]] && fail "nothing left behind"
+  return 0
+}
+
+# Killed by hand from a process list, as `kill <pid>` would: the supervisor (its command
+# line is the one with the project's name) stops the service; the service itself just
+# stops (no red tab); a supervisor killed outright leaves the tab while the service runs.
+test_run_killed_by_hand() {
+  AXLE_MODULES=(run) load_tool
+  local REPLY port; free_port; port=$REPLY
+  web_project $port || return 0
+  local dir=$HOME/.local/state/axle/run/services/web drop=$HOME/.cache/axle/drops/run-web pid
+  _axle_run_start $T/web web; wait_state web up
+  pid=$(<$dir/pid)
+  kill -TERM $(<$dir/watcher)
+  local -i i
+  for i in {1..60}; do [[ -e $dir ]] || break; sleep 0.1; done
+  kill -0 $pid 2>/dev/null && fail "TERM to the supervisor stops the service"
+  [[ -e $dir || -e $drop ]] && fail "and leaves nothing behind"
+
+  _axle_run_start $T/web web; wait_state web up
+  pid=$(<$dir/pid)
+  kill -TERM $pid
+  for i in {1..60}; do [[ -e $dir ]] || break; sleep 0.1; done
+  [[ -e $drop ]] && fail "a service stopped with TERM gets no red tab: $(<$drop)"
+
+  _axle_run_start $T/web web; wait_state web up
+  pid=$(<$dir/pid)
+  kill -KILL $(<$dir/watcher); sleep 0.3
+  kill -0 $pid 2>/dev/null || fail "(the service outlives a killed supervisor)"
+  load_theme
+  _axle_seg_drops; plain "$REPLY"
+  assert_contains "$REPLY" "⚡ web :$port" "its tab stays while it runs"
+  assert_match "$(axle run ls)" "*web*up*$port*" "ls still lists it"
+  axle run stop web >/dev/null; sleep 0.2
+  kill -0 $pid 2>/dev/null && fail "and stop still ends it"
   return 0
 }
 
@@ -566,6 +631,49 @@ test_run_two_projects_same_port() {
   assert_eq "$(<$HOME/.local/state/axle/run/services/one/port)" $port "the first on the port"
   assert_eq "$(<$HOME/.local/state/axle/run/services/two/port)" $(( port + 1 )) "the second on the next one"
   _axle_run_port_up $port && _axle_run_port_up $(( port + 1 )) || fail "both answer"
+  axle run stop all >/dev/null
+}
+
+# A file that starts its own server (app.run(port=...) under __main__) is still given the
+# next free port, without changing it: its run() gets the port (modules/run/py).
+test_run_self_starting_file_on_another_port() {
+  AXLE_MODULES=(run) load_tool
+  local REPLY port; free_port; port=$REPLY
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  web_project $port
+  _axle_run_start $T/web taken; wait_state taken up
+  # A stand-in for Flask (found before any installed one): run() serves on its port.
+  mkdir -p $T/selfy/flask
+  print -l 'from .app import Flask' > $T/selfy/flask/__init__.py
+  print -l 'import http.server' \
+    'class Flask:' \
+    '    def __init__(self, name): pass' \
+    '    def run(self, host="127.0.0.1", port=5000, debug=False):' \
+    '        print(f"Running on http://{host}:{port}", flush=True)' \
+    '        http.server.HTTPServer((host, port), http.server.SimpleHTTPRequestHandler).serve_forever()' \
+    > $T/selfy/flask/app.py
+  print -l 'from flask import Flask' 'app = Flask(__name__)' \
+    'if __name__ == "__main__":' "    app.run(host=\"127.0.0.1\", port=$port, debug=True)" > $T/selfy/app.py
+  : > $T/selfy/requirements.txt
+  local out
+  _axle_ui_tty </dev/null          # (load the questions, then stand in for one)
+  axle_confirm() { print -r -- "ASKED $1"; return 0 }
+  cd $T/selfy; out=$(axle run </dev/null 2>&1) || fail "it runs: $out"
+  assert_contains "$out" "Port $port is taken by your service taken" "the clash"
+  assert_match "$out" "*is taken*ASKED Run it?*" "said before the first-run question"
+  assert_contains "$out" "ASKED Run it?  python · Flask · ${py:t} app.py" "which asks about the file as it is"
+  assert_contains "$out" "using port $(( port + 1 ))" "the next port"
+  assert_not_match "$out" "*PYTHONPATH*" "the hook isn't shown"
+  assert_not_match "$out" "*can't be given*" "nor a reason it can't"
+  wait_state selfy up
+  assert_eq "$(<$HOME/.local/state/axle/run/services/selfy/port)" $(( port + 1 )) "it serves there"
+  assert_contains "$(<$HOME/.local/state/axle/run/services/selfy/log)" "Running on http://127.0.0.1:$(( port + 1 ))" "its own run() was given it"
+  assert_eq "$(<$T/selfy/app.py | tail -1)" "    app.run(host=\"127.0.0.1\", port=$port, debug=True)" "the file is unchanged"
+  # On its own port next time it's the same command: not asked again.
+  axle run stop all >/dev/null
+  _axle_run_start $T/web taken; wait_state taken up   # (still taken: another clash)
+  out=$(axle run </dev/null 2>&1)
+  [[ $out == *ASKED* ]] && fail "trusted already, whichever port: $out"
   axle run stop all >/dev/null
 }
 

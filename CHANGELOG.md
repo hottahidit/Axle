@@ -44,12 +44,19 @@ New:
     (`AXLE_RUN_VENV`: `ask`, `project`, `active`), and says so when it's using one from
     outside the project or a venv is broken.
   - A Python file that starts its own server under `__main__` runs as it is, not through
-    `flask run` or uvicorn, so whatever it starts first still starts.
+    `flask run` or uvicorn, so whatever it starts first still starts. On a taken port it
+    can still move to the next free one, without changing the file: a small startup hook
+    (`modules/run/py/sitecustomize.py`, only for what axle run starts) gives the port to
+    `app.run`, `socketio.run` or `uvicorn.run`. The hook also lets Flask-SocketIO's
+    development server start in the background, which it otherwise refuses without a
+    terminal.
   - Servers run in the background, supervised (no daemon): their output goes to a log,
     `.env` is read as data (never sourced) and given to the process, and the prompt shows
     a tab: `⏳ name` while starting, `⚡ name :port` once the port answers (Ctrl+click
     opens it; the port a dev server prints, if it picked another), red if it exits with
-    an error. They keep running when the terminal closes.
+    an error. They keep running when the terminal closes. Killing one by hand works too:
+    its supervisor (the process with the project's name) stops it, a service ended with
+    TERM or Ctrl-C gets no red tab, and the tab follows the service, not its supervisor.
   - Ports: read from the command, the code, `vite.config`, `PORT` in `.env`, or the
     framework's default. A taken port says who has it (one of your services, or which
     program: `/proc` on Linux, `lsof` on macOS) and offers the next free port (passed the
@@ -68,10 +75,12 @@ New:
   - `axle run ls` (state, port, uptime, memory, URL), `stop [name|all]`, `restart`,
     `logs [-f]` (which also clears a red tab) and `open`; `--fg` / `--bg` to choose.
   - Asks before a project's command runs the first time, and remembers per project and
-    command; a changed package.json script asks again. `--yes` skips the question.
+    command; a changed package.json script asks again. A taken port is sorted out before
+    that question, and another port doesn't make it a new command. `--yes` skips the question.
   - `axle run --dry-run` says which project, why, what would run and how.
   - A missing program (pnpm, cargo, ...) is said before anything is asked, with how to
-    install it; answering no to "Run <last project>?" leaves you where you were, and
+    install it; answering no to "Run <last project>?" leaves you where you were and lists the
+    other projects you worked in lately, to run one of them instead (Esc: none), and
     from a folder with nothing to run it says so before offering that project.
 - Shared helpers, so each works without the other part: project markers and venv finding
   (`lib/project.zsh`, used by Benzene, `env` and `run`), and `j`'s folder ranking
