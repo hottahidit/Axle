@@ -107,7 +107,7 @@ _axle_run_tmux() {
   fi
   [[ -n $_axle_run_port ]] && envs+=(-e PORT=$_axle_run_port)
   local e
-  _axle_run_envfile $dir/.env && for e in $reply; do envs+=(-e $e); done
+  _axle_run_dotenv $dir && for e in $reply; do envs+=(-e $e); done
   for e in $_axle_run_env; do envs+=(-e $e); done
   # Through a small sh that holds the session open when the program ends, so its output
   # stays readable (remain-on-exit loses it). The words are arguments, never re-parsed.

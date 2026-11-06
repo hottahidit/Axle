@@ -9,6 +9,11 @@
 #   prompt         before each prompt is drawn
 #   dir            the directory changed              $1 = new directory
 #   expand         Alt-i toggled (Benzene)            $1 = 1 expanded, 0 collapsed
+#   run-start      axle run started something         $1 = name, $2 = folder, $3 = kind
+#   run-ready      a service it started answers       $1 = name, $2 = URL, $3 = port
+#   run-crash      it failed                          $1 = name, $2 = exit code
+#   run-stop       it stopped or finished             $1 = name
+#   (run-*: in the shell that started it; modules/run/yours.zsh)
 #   During command-done, $_axle_ev_dir is where the command ran and $_axle_ev_prev the
 #   command before it.
 #
@@ -20,7 +25,7 @@
 zmodload zsh/datetime 2>/dev/null
 autoload -Uz add-zsh-hook
 
-for _axle_e in command_start command_done prompt expand dir; do
+for _axle_e in command_start command_done prompt expand dir run_start run_ready run_crash run_stop; do
   (( ${(P)+${:-_axle_hook_$_axle_e}} )) || typeset -ga _axle_hook_$_axle_e
 done
 unset _axle_e
@@ -38,7 +43,7 @@ _axle_emit() {
 }
 
 _axle_hook_cmd() {
-  local -a events=(command-start command-done prompt expand dir)
+  local -a events=(command-start command-done prompt expand dir run-start run-ready run-crash run-stop)
   case $1 in
     ls)
       local e var

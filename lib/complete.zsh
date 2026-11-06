@@ -52,7 +52,9 @@ _axle_complete() {
       fi ;;
     hook)
       local -a events=('command-start:before a command runs' 'command-done:after it finishes'
-                       'prompt:before each prompt' 'expand:Alt-i toggled' 'dir:the directory changed')
+                       'prompt:before each prompt' 'expand:Alt-i toggled' 'dir:the directory changed'
+                       'run-start:axle run started something' 'run-ready:a service answers'
+                       'run-crash:what axle run started failed' 'run-stop:it stopped or finished')
       case $CURRENT in
         3) _describe -t events event events; compadd -- ls rm ;;
         4) if [[ $words[3] == rm ]]; then _describe -t events event events
@@ -85,8 +87,22 @@ _axle_complete() {
       local -a svcs=(${XDG_STATE_HOME:-$HOME/.local/state}/axle/run/services/*(N/:t))
       if (( CURRENT == 3 )) && [[ $PREFIX != -* ]]; then
         _values action 'ls[what is running]' 'stop[stop a service]' 'restart[restart a service]' \
-          'logs[a service'"'"'s output]' 'open[open its URL]'
+          'logs[a service'"'"'s output]' 'open[open its URL]' 'set[this project'"'"'s settings]' \
+          'forget[drop this project'"'"'s settings and approvals]'
         (( $+functions[_axle_jump_complete] )) && { shift words; (( CURRENT-- )); _axle_jump_complete }
+      elif [[ $words[3] == set ]]; then
+        case $CURRENT in
+          4) _values setting 'command[what runs]' 'port[the port it listens on]' \
+               'kind[service (background) or task (foreground)]' 'env-file[its .env file]' ;;
+          5) case $words[4] in
+               kind)     compadd -- service task ;;
+               env-file) _files -g '.env*(D)' ;;
+             esac ;;
+        esac
+      elif [[ $words[CURRENT-1] == --profile ]]; then
+        local -a profs=(.env.*(DN.))
+        profs=(${profs#.env.} none)
+        compadd -a profs
       elif [[ $words[3] == (stop|restart|logs|open) ]]; then
         [[ $words[3] == stop ]] && svcs+=(all)
         [[ $words[3] == logs ]] && compadd -- -f
@@ -94,7 +110,8 @@ _axle_complete() {
       elif [[ $PREFIX == -* ]]; then
         _values option '--dry-run[say what would run, and why]' '--yes[run without asking]' \
           '--fg[in the foreground]' '--bg[in the background]' '--config[choose the parts again]' \
-          '--verbose[show these parts'"'"' output]' '--only[just the --verbose parts]'
+          '--verbose[show these parts'"'"' output]' '--only[just the --verbose parts]' \
+          '--profile[use .env.<name> over .env, remembered]'
       elif (( $+functions[_axle_jump_complete] )); then
         shift words; (( CURRENT-- ))
         _axle_jump_complete

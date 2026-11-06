@@ -1092,3 +1092,186 @@ test_run_venv_question_in_a_terminal() {
   zpty -w sh 'exit'; zpty -d sh 2>/dev/null
   return 0
 }
+
+# --- M5: your settings ------------------------------------------------------------------
+
+# A small Python project whose main.py prints the given environment variables.
+env_project() {
+  mkdir -p $1; print '[project]' > $1/pyproject.toml
+  print "import os; print('|'.join(os.environ.get(k, '-') for k in ['GREET', 'OTHER']))" > $1/main.py
+}
+
+# Your command: runs without asking, survives a new shell, can be shown, refused when
+# wrong, removed; forget drops settings and approvals.
+test_run_set_and_forget() {
+  AXLE_MODULES=(run) load_tool
+  whence -p python3 >/dev/null || return 0
+  env_project $T/proj
+  cd $T/proj
+  _axle_ui_tty </dev/null; axle_confirm() { print -r -- "ASKED $1"; return 0 }
+  local out REPLY
+  out=$(axle run set command python3 -c 'print("mine")' 2>&1)
+  assert_contains "$out" "proj: command = python3 -c 'print(\"mine\")'" "several words kept apart"
+  out=$(axle run </dev/null 2>&1)
+  assert_contains "$out" "mine" "your command runs"
+  [[ $out == *ASKED* ]] && fail "and isn't asked about: $out"
+  out=$(zsh -fc "HOME=$HOME XDG_STATE_HOME=$XDG_STATE_HOME AXLE_MODULES=(run); source $ROOT/axle.plugin.zsh; cd $T/proj; axle run --dry-run" 2>&1)
+  assert_contains "$out" "how    your command (axle run set command)" "in a new shell too"
+  assert_contains "$out" "yours  command" "and says it's yours"
+  axle run set port 99999 2>/dev/null && fail "a port is 1-65535"
+  axle run set kind daemon 2>/dev/null && fail "a kind is service or task"
+  axle run set colour red 2>/dev/null && fail "no such setting"
+  axle run set kind task >/dev/null
+  out=$(axle run set); nocolor "$out"; out=$REPLY
+  assert_match "$out" "*command*print*kind*task*" "set alone shows them"
+  axle run set command >/dev/null
+  out=$(axle run </dev/null 2>&1)
+  assert_contains "$out" "ASKED Run it?" "back to the detected command, which asks"
+  assert_contains "$out" "-|-" "and runs it"
+  out=$(axle run forget)
+  assert_contains "$out" "forgot its settings, saved parts and approved commands"
+  out=$(axle run </dev/null 2>&1)
+  assert_contains "$out" "ASKED Run it?" "asked again after forget"
+  assert_contains "$(axle run set)" "proj: nothing set" "settings gone"
+}
+
+# A port of yours goes to the server the way a taken port's replacement would, and the
+# command stays the one you approved.
+test_run_set_port_is_given_to_the_server() {
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/site; print '<!doctype html>' > $T/site/index.html
+  cd $T/site
+  axle run set port 8123 >/dev/null
+  local out=$(axle run --dry-run)
+  assert_contains "$out" "run    python3 -m http.server 8123" "the command gets it"
+  assert_contains "$out" "service on http://localhost:8123"
+  _axle_run_detect $T/site; _axle_run_trust_key $T/site; local with=$REPLY
+  axle run set port >/dev/null
+  _axle_run_detect $T/site; _axle_run_trust_key $T/site
+  assert_eq "$REPLY" "$with" "one approval, whatever the port"
+}
+
+# --profile: .env.<name> over .env (or over your env-file), remembered; none drops it.
+test_run_profiles_and_env_file() {
+  AXLE_MODULES=(run) load_tool
+  whence -p python3 >/dev/null || return 0
+  env_project $T/proj
+  print -l GREET=base OTHER=1 > $T/proj/.env
+  print GREET=prod > $T/proj/.env.prod
+  print -l GREET=local OTHER=2 > $T/proj/.env.local
+  cd $T/proj
+  local out
+  out=$(axle run --yes --profile prod </dev/null 2>&1)
+  assert_contains "$out" "prod|1" "the profile over .env"
+  assert_contains "$out" "profile prod: .env.prod over .env" "said"
+  out=$(axle run --yes </dev/null 2>&1)
+  assert_contains "$out" "prod|1" "remembered"
+  assert_contains "$(axle run --dry-run)" "env    .env then .env.prod"
+  out=$(axle run --profile staging </dev/null 2>&1) && fail "a profile with no file"
+  assert_contains "$out" "no .env.staging in proj (there's .env.local, .env.prod)"
+  axle run set env-file .env.local >/dev/null
+  out=$(axle run --yes </dev/null 2>&1)
+  assert_contains "$out" "prod|2" "your env-file, then the profile over it"
+  out=$(axle run --yes --profile none </dev/null 2>&1)
+  assert_contains "$out" "local|2" "none: just the env-file"
+  out=$(axle run --yes </dev/null 2>&1)
+  assert_contains "$out" "local|2" "and that's remembered too"
+}
+
+# Hooks fire once each, in this shell: start, ready, stop for a service; crash for one
+# that fails; a task's start and crash.
+test_run_hooks_fire_once() {
+  AXLE_MODULES=(run) load_tool
+  whence -p python3 >/dev/null || return 0
+  local REPLY port; free_port; port=$REPLY
+  mkdir -p $T/site; print '<!doctype html>' > $T/site/index.html
+  _h() { print -r -- "$*" >> $T/hooks }
+  h_start() { _h start "$@" }; h_ready() { _h ready "$@" }; h_crash() { _h crash "$@" }; h_stop() { _h stop "$@" }
+  axle hook run-start h_start; axle hook run-ready h_ready; axle hook run-crash h_crash; axle hook run-stop h_stop
+  cd $T/site
+  axle run set command python3 $ROOT/tests/serve.py $port >/dev/null
+  axle run set kind service >/dev/null; axle run set port $port >/dev/null
+  axle run --yes >/dev/null 2>&1
+  local -i i
+  for i in {1..100}; do _axle_run_watch_check; [[ -r $T/hooks && $(<$T/hooks) == *ready* ]] && break; sleep 0.1; done
+  _axle_run_watch_check; _axle_run_watch_check                  # (more prompts)
+  axle run stop >/dev/null
+  _axle_run_watch_check
+  assert_eq "$(<$T/hooks)" "start site $T/site service
+ready site http://localhost:$port $port
+stop site" "each once, in order"
+  : > $T/hooks
+  axle run set command sh -c 'exit 3' >/dev/null; axle run set port >/dev/null
+  axle run --yes >/dev/null 2>&1
+  for i in {1..50}; do _axle_run_watch_check; [[ $(<$T/hooks) == *crash* ]] && break; sleep 0.1; done
+  _axle_run_watch_check
+  assert_eq "$(<$T/hooks)" "start site $T/site service
+crash site 3" "a crash, once"
+  axle run stop >/dev/null 2>&1
+  : > $T/hooks
+  axle run set kind task >/dev/null
+  axle run --yes >/dev/null 2>&1
+  assert_eq "$(<$T/hooks)" "start site $T/site task
+crash site 3" "a task's"
+}
+
+# AXLE_RUN_ON_EXIT=stop: a service ends with the terminal that started it.
+test_run_on_exit_stop() {
+  zmodload zsh/zpty 2>/dev/null || return 0
+  AXLE_MODULES=(run) load_tool
+  local REPLY port; free_port; port=$REPLY
+  web_project $port || return 0
+  print -l "AXLE_MODULES=(run); AXLE_RUN_ON_EXIT=stop; source $ROOT/axle.plugin.zsh" \
+    "typeset -ga _axle_run_cmd=($_axle_run_cmd); typeset -g _axle_run_kind=service _axle_run_port=$port" \
+    "_axle_run_start $T/web web; : > $T/started" > $T/setup.zsh
+  zpty sh "HOME=$HOME XDG_CONFIG_HOME=$XDG_CONFIG_HOME XDG_CACHE_HOME=$XDG_CACHE_HOME XDG_DATA_HOME=$XDG_DATA_HOME HISTFILE=$T/hist TERM=xterm AXLE_UPDATE_CHECK=0 zsh -f -i"
+  zpty -w sh "PS1='> '; source $T/setup.zsh"
+  local -i i; local c
+  for i in {1..100}; do while zpty -rt sh c 2>/dev/null; do :; done; [[ -e $T/started ]] && break; sleep 0.1; done
+  wait_state web up
+  local pid=$(<$HOME/.local/state/axle/run/services/web/pid)
+  zpty -d sh 2>/dev/null                         # close the terminal
+  for i in {1..60}; do kill -0 $pid 2>/dev/null || break; sleep 0.1; done
+  kill -0 $pid 2>/dev/null && fail "the service stops with its terminal"
+  [[ -e $HOME/.local/state/axle/run/services/web ]] && fail "and leaves nothing"
+  return 0
+}
+
+# AXLE_RUN_OPEN=1 opens the browser once it's up; AXLE_RUN_TRUST=always doesn't ask.
+test_run_open_and_trust_settings() {
+  AXLE_MODULES=(run) load_tool
+  local REPLY port; free_port; port=$REPLY
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  mkdir -p $T/bin $T/site; print '<!doctype html>' > $T/site/index.html
+  local o
+  for o in wslview xdg-open open; do
+    print -l '#!/bin/sh' "echo \"\$1\" >> $T/opened" > $T/bin/$o; chmod +x $T/bin/$o
+  done
+  path=($T/bin $path)
+  _axle_ui_tty </dev/null; axle_confirm() { print -r -- "ASKED $1"; return 0 }
+  cd $T/site
+  axle run set command $py $ROOT/tests/serve.py $port >/dev/null
+  axle run set kind service >/dev/null; axle run set port $port >/dev/null
+  AXLE_RUN_OPEN=1 axle run >/dev/null 2>&1
+  wait_state site up
+  local -i i
+  for i in {1..30}; do [[ -s $T/opened ]] && break; sleep 0.1; done
+  assert_eq "$(<$T/opened)" "http://localhost:$port" "the browser opens it"
+  axle run restart >/dev/null 2>&1; wait_state site up; sleep 0.3
+  assert_eq "$(<$T/opened)" "http://localhost:$port" "but not on a restart"
+  axle run stop >/dev/null
+  axle run set command >/dev/null; axle run set port >/dev/null; axle run set kind >/dev/null
+  local out
+  out=$(AXLE_RUN_TRUST=always axle run --fg --dry-run 2>&1)
+  assert_contains "$out" "runs without asking (AXLE_RUN_TRUST=always)" "dry run says so"
+  axle run set kind task >/dev/null
+  axle run set command $py -c 'print("ran")' >/dev/null    # (yours: never asked anyway)
+  axle run set command >/dev/null
+  mkdir -p $T/py; print '[project]' > $T/py/pyproject.toml; print 'print("ran")' > $T/py/main.py
+  cd $T/py
+  out=$(AXLE_RUN_TRUST=always axle run </dev/null 2>&1)
+  assert_contains "$out" "not asked: AXLE_RUN_TRUST=always"
+  assert_contains "$out" "ran"
+  [[ $out == *ASKED* ]] && fail "not asked: $out"
+  return 0
+}

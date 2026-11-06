@@ -79,6 +79,9 @@ typeset -gA _axle_settings=(
   AXLE_SEARCH_ROWS      'tool|int|10|rows in the history picker'
   AXLE_ENV_QUIET        'tool|bool|0|switch venvs without saying so'
   AXLE_RUN_VENV         'tool|choice:ask,project,active|ask|axle run, when another venv is active: ask, or use the project'"'"'s or the active one'
+  AXLE_RUN_ON_EXIT      'tool|choice:keep,stop|keep|axle run'"'"'s services when their terminal closes: keep running, or stop'
+  AXLE_RUN_OPEN         'tool|bool|0|axle run: open the browser when a service is ready'
+  AXLE_RUN_TRUST        'tool|choice:ask,always|ask|axle run: ask before a project'"'"'s command runs the first time (always: never ask)'
 )
 
 # The setting's fields: reply=(part kind default description).

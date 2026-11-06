@@ -165,6 +165,30 @@ _axle_run_drop() {
   print -r -- "$body" >| $file.$$ && command mv -f -- $file.$$ $file
 }
 
+# The values of a run's .env files, in order (reply): _axle_run_envfiles (set by
+# detection: .env or yours, then the profile's), else <folder>/.env.
+_axle_run_dotenv() {
+  local f
+  local -a all=() files=(${_axle_run_envfiles:-$1/.env})
+  for f in $files; do _axle_run_envfile $f && all+=($reply); done
+  reply=($all)
+  (( ${#reply} ))
+}
+
+# Open a URL in the browser (REPLY = the program used); status 1 if there's none.
+_axle_run_browse() {
+  local opener
+  local -a openers=(wslview xdg-open)
+  [[ $OSTYPE == darwin* ]] && openers=(open)
+  for opener in $openers; do
+    whence -p $opener >/dev/null || continue
+    command $opener $1 >/dev/null 2>&1 &!
+    REPLY=$opener
+    return 0
+  done
+  return 1
+}
+
 # --- names ----------------------------------------------------------------------------
 
 # The service name for a project (part) folder (REPLY): <base> (default: its folder name),
@@ -255,15 +279,24 @@ _axle_run_start() {
 
   # The environment: .env values (data), then what axle run sets (e.g. a changed port).
   local -a envs=()
-  _axle_run_envfile $root/.env && envs=($reply)
+  _axle_run_dotenv $root && envs=($reply)
   envs+=($_axle_run_env)
   (( ${#_axle_run_env} )) && print -rn -- "${(pj:\0:)_axle_run_env}" >| $dir/env
+  (( ${#_axle_run_envfiles} )) && print -rn -- "${(pj:\0:)_axle_run_envfiles}" >| $dir/envfiles
+  # AXLE_RUN_ON_EXIT=stop: it ends with this shell (the supervisor watches it).
+  local owner=''
+  if [[ $AXLE_RUN_ON_EXIT == stop ]]; then
+    _axle_run_pstart $$ && owner="$$:$REPLY"
+  fi
+  # AXLE_RUN_OPEN=1: the browser opens once it answers (not on a restart).
+  local open=0
+  [[ $AXLE_RUN_OPEN == 1 ]] && (( ! _axle_run_no_open )) && open=1
   # The supervisor is a fresh, non-interactive zsh, not a subshell of this one: a subshell
   # of an interactive shell keeps its terminal open and fails once the terminal closes.
   local zsh_bin=${commands[zsh]:-zsh}
   [[ -x /proc/$$/exe ]] && zsh_bin=/proc/$$/exe      # (the very zsh running now)
   _axle_run_put $dir venv "$_axle_run_use_venv"
-  AXLE_RUN_USE_VENV=$_axle_run_use_venv $zsh_bin -f -c 'source "$1/lib/project.zsh" && source "$1/modules/run/service.zsh" &&
+  AXLE_RUN_USE_VENV=$_axle_run_use_venv AXLE_RUN_OWNER=$owner AXLE_RUN_OPEN_URL=$open $zsh_bin -f -c 'source "$1/lib/project.zsh" && source "$1/modules/run/service.zsh" &&
                   shift && _axle_run_supervise "$@"' axle-run \
     $AXLE_ROOT $root $name $dir "$_axle_run_port" ${#envs} "${envs[@]}" "${_axle_run_cmd[@]}" \
     </dev/null >>$dir/log 2>&1 &!
@@ -295,8 +328,8 @@ _axle_run_supervise() {
   if [[ -n $AXLE_RUN_DEBUG ]]; then exec 2>>$dir/trace; setopt xtrace; fi
   _axle_run_put $dir watcher $$
   cd -- $root || { _axle_run_put $dir state crashed; _axle_run_put $dir code 1; return 1 }
-  local REPLY e use=$AXLE_RUN_USE_VENV
-  unset AXLE_RUN_USE_VENV
+  local REPLY e use=$AXLE_RUN_USE_VENV owner=$AXLE_RUN_OWNER open=$AXLE_RUN_OPEN_URL
+  unset AXLE_RUN_USE_VENV AXLE_RUN_OWNER AXLE_RUN_OPEN_URL
   [[ -z $use ]] && _axle_venv_find $root && use=$REPLY
   _axle_run_enter_venv "$use"
   [[ -n $port ]] && export PORT=$port
@@ -312,6 +345,7 @@ _axle_run_supervise() {
   # free one), else the one detected.
   local url=''
   while kill -0 $spid 2>/dev/null; do
+    _axle_run_owner_gone $owner && { _axle_run_sup_term; return 0 }
     if _axle_run_log_port $dir/log; then
       port=$REPLY url=$_axle_run_logurl
     fi
@@ -321,10 +355,18 @@ _axle_run_supervise() {
       _axle_run_put $dir url $url
       _axle_run_put $dir state up
       _axle_run_drop $name up $port $url $spid
+      (( open )) && _axle_run_browse $url
       break
     fi
     zselect -t 25
   done
+  # With an owner shell, look every 2 s whether it's still there.
+  if [[ -n $owner ]]; then
+    while kill -0 $spid 2>/dev/null; do
+      _axle_run_owner_gone $owner && { _axle_run_sup_term; return 0 }
+      zselect -t 200
+    done
+  fi
   wait $spid
   local -i code=$?
   [[ -e $dir/stopping || ! -d $dir ]] && return 0
@@ -335,6 +377,14 @@ _axle_run_supervise() {
     _axle_run_put $dir code $code
     _axle_run_drop $name crashed '' '' '' $code
   fi
+}
+
+# Has the shell that started it ended (_axle_run_owner_gone <pid:start time>)?
+_axle_run_owner_gone() {
+  [[ -n $1 ]] || return 1
+  local REPLY
+  kill -0 ${1%%:*} 2>/dev/null || return 0
+  _axle_run_pstart ${1%%:*} && [[ $REPLY != ${1#*:} ]]
 }
 
 # The supervisor got TERM (its variables in scope): stop the service and everything it
@@ -398,6 +448,8 @@ _axle_run_bg() {
     return 0
   fi
   _axle_run_start $root $name || return 1
+  _axle_emit run-start $name $root service
+  _axle_run_watch_add $name
   # Up to ~10 s for it to answer (Ctrl-C stops waiting, not the service).
   local -i i
   local state=''
@@ -406,6 +458,7 @@ _axle_run_bg() {
     [[ $state == (up|crashed) || ! -d $dir ]] && break
     zselect -t 25                                  # (its status is 1 on a plain timeout)
   done
+  (( ${+_axle_run_watch[$name]} )) && _axle_run_watch_check
   case $state in
     up)
       _axle_run_get $dir url
@@ -515,7 +568,7 @@ _axle_run_stop() {
   fi
   local name
   for name in $names; do
-    _axle_run_stop_one $name && print -r -- "stopped $name"
+    _axle_run_stop_one $name && print -r -- "stopped $name" && _axle_run_watch_stopped $name
   done
 }
 
@@ -536,9 +589,13 @@ _axle_run_restart() {
   local -a reply words extra=()
   _axle_run_words $dir/cmd; words=($reply)
   [[ -r $dir/env ]] && { _axle_run_words $dir/env; extra=($reply) }
+  local -a files=()
+  [[ -r $dir/envfiles ]] && { _axle_run_words $dir/envfiles; files=($reply) }
   _axle_run_stop_one $name
-  typeset -ga _axle_run_cmd=($words) _axle_run_env=($extra)
+  _axle_run_watch_stopped $name
+  typeset -ga _axle_run_cmd=($words) _axle_run_env=($extra) _axle_run_envfiles=($files)
   typeset -g _axle_run_port=$port _axle_run_kind=${kind:-service}
+  local -i _axle_run_no_open=1
   _axle_run_bg $root $name
 }
 
@@ -569,14 +626,5 @@ _axle_run_open() {
   local name=$REPLY dir=$_axle_run_dir/services/$REPLY url
   _axle_run_get $dir url; url=$REPLY
   [[ -n $url ]] || { print -u2 -r -- "axle run: $name has no URL (yet)"; return 1 }
-  local opener
-  local -a openers=(wslview xdg-open)
-  [[ $OSTYPE == darwin* ]] && openers=(open)
-  for opener in $openers; do
-    whence -p $opener >/dev/null || continue
-    print -r -- "opening $url"
-    command $opener $url >/dev/null 2>&1 &!
-    return 0
-  done
-  print -r -- "$url"
+  if _axle_run_browse $url; then print -r -- "opening $url"; else print -r -- "$url"; fi
 }

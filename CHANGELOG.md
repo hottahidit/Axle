@@ -78,6 +78,20 @@ New:
     command; a changed package.json script asks again. A taken port is sorted out before
     that question, and another port doesn't make it a new command. `--yes` skips the question.
   - `axle run --dry-run` says which project, why, what would run and how.
+  - Your settings, per project or part, kept in axle run's state (never in the project):
+    `axle run set command "…"` (yours, so it runs without asking; split into words like
+    the shell does, never run through one), `set port 8080` (given to the server the way a
+    taken port's replacement is), `set kind service|task`, `set env-file .env.local`;
+    `axle run set` shows them, `set <key>` alone removes one, `axle run forget` drops the
+    project's settings, saved parts and approvals.
+  - Profiles: `axle run --profile prod` reads `.env.prod` over `.env`, and is remembered
+    for the project (`--profile none` drops it).
+  - Hook events `run-start`, `run-ready`, `run-crash`, `run-stop` (`axle hook`), once each,
+    in the shell that started it; a service's are noticed at the next prompt, only while
+    there's one to watch.
+  - Settings: `AXLE_RUN_ON_EXIT=stop` (services end with the terminal that started them),
+    `AXLE_RUN_OPEN=1` (open the browser once a service answers; not on a restart),
+    `AXLE_RUN_TRUST=always` (never ask before a project's command runs).
   - A missing program (pnpm, cargo, ...) is said before anything is asked, with how to
     install it; answering no to "Run <last project>?" leaves you where you were and lists the
     other projects you worked in lately, to run one of them instead (Esc: none), and

@@ -185,7 +185,7 @@ Each milestone ends with its tests passing (Linux + macOS CI) and is usable on i
   the foreground after the others start (more than one is an error); `--only`.
 - **Done when:** fixtures for each pass; a monorepo asks which part.
 
-### M5 · Your settings
+### M5 · Your settings ✔
 - Per-project override in Axle's state, not the repo: `axle run set command "…"`, `port`,
   `kind`, `env-file` (data only).
 - Profiles: `axle run --profile prod` → `.env.prod`, remembered per project.

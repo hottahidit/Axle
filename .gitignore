@@ -2,3 +2,6 @@
 *.zwc
 *.zwc.old
 .zwc-version
+
+# Python bytecode (axle run's startup hook, modules/run/py)
+__pycache__/

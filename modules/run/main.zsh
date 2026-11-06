@@ -239,7 +239,7 @@ _axle_run_exec() {
     # The same environment a background service gets: .env (data), PORT, what axle run set.
     local e
     local -a reply
-    _axle_run_envfile $root/.env && for e in $reply; do export "$e"; done
+    _axle_run_dotenv $root && for e in $reply; do export "$e"; done
     [[ $_axle_run_kind == service && -n $_axle_run_port ]] && export PORT=$_axle_run_port
     for e in $_axle_run_env; do export "$e"; done
     exec -- "${_axle_run_cmd[@]}"
@@ -252,7 +252,7 @@ _axle_run_ready() {
   local dir=$1 name=$2 yes=$3
   _axle_run_installed $dir $name || return 1
   if [[ $_axle_run_kind == service ]]; then
-    typeset -ga _axle_run_cmd_detected=($_axle_run_cmd)
+    (( ${#_axle_run_cmd_detected} )) || typeset -ga _axle_run_cmd_detected=($_axle_run_cmd)
     _axle_run_resolve_port $dir $name || return 1
   fi
   _axle_run_approve $dir $name $yes
@@ -269,12 +269,17 @@ _axle_run_approve() {
   local dir=$1 name=$2 yes=$3 REPLY
   _axle_run_installed $dir $name || return 1
   _axle_run_trust_key $dir
-  local key=$REPLY
-  if ! _axle_run_trusted $key; then
+  local key=$REPLY muted=${_axle_c[muted]:-244}
+  # Your own command (axle run set command) needs no approval.
+  if (( ! ${_axle_run_yours[(Ie)command]} )) && ! _axle_run_trusted $key; then
     if (( ! yes )); then
       _axle_run_show $dir
-      _axle_printp "%F{${_axle_c[muted]:-244}}First run of this command in ${name//\%/%%} (${_axle_run_reason//\%/%%}).%f"
-      axle_confirm "Run it?  $_axle_run_what · $REPLY" n || return 1
+      _axle_printp "%F{$muted}First run of this command in ${name//\%/%%} (${_axle_run_reason//\%/%%}).%f"
+      if [[ $AXLE_RUN_TRUST == always ]]; then
+        _axle_printp "%F{$muted}(not asked: AXLE_RUN_TRUST=always)%f"
+      else
+        axle_confirm "Run it?  $_axle_run_what · $REPLY" n || return 1
+      fi
     fi
     _axle_run_trust $key
   fi
@@ -351,6 +356,8 @@ _axle_run_compose_up() {
   _axle_run_put $sdir started $EPOCHSECONDS
   _axle_run_put $sdir state up
   _axle_run_drop $name up "$_axle_run_port" "${_axle_run_port:+http://localhost:$_axle_run_port}" ''
+  _axle_emit run-start $name $dir compose
+  _axle_emit run-ready $name "${_axle_run_port:+http://localhost:$_axle_run_port}" "$_axle_run_port"
   _axle_printp "%F{${_axle_c[ok]:-green}}⚡%f %B${name//\%/%%}%b up (docker compose)${_axle_run_port:+ on http://localhost:$_axle_run_port}  %F{${_axle_c[muted]:-244}}(axle run logs · stop)%f"
 }
 
@@ -363,8 +370,10 @@ _axle_cmd_run() {
     restart)  shift; _axle_run_restart "$@"; return ;;
     logs|log) shift; _axle_run_logs "$@"; return ;;
     open)     shift; _axle_run_open "$@"; return ;;
+    set)      shift; _axle_run_set_cmd "$@"; return ;;
+    forget)   shift; _axle_run_forget_project "$@"; return ;;
   esac
-  local dry=0 yes=0 mode='' config=0 only=0 vset=0
+  local dry=0 yes=0 mode='' config=0 only=0 vset=0 profile='' pset=0
   local -a words=() vnames=()
   while (( $# )); do
     case $1 in
@@ -374,6 +383,10 @@ _axle_cmd_run() {
       --bg)         mode=bg ;;
       --config)     config=1 ;;
       --only)       only=1 ;;
+      --profile=*)  pset=1; profile=${1#*=} ;;
+      --profile)
+        [[ -n $2 ]] || { print -u2 -r -- "axle run: --profile needs a name (or none)"; return 1 }
+        pset=1; profile=$2; shift ;;
       --verbose=*)  vset=1; vnames+=(${(s:,:)${${1#*=}// /,}}) ;;
       -v|--verbose)
         vset=1
@@ -389,7 +402,17 @@ _axle_cmd_run() {
   local REPLY root=$_axle_run_root name=${_axle_run_root:t}
   local muted=${_axle_c[muted]:-244} accent=${_axle_c[accent]:-magenta} warn=${_axle_c[warn]:-yellow}
   local -a reply parts=()
+  # The profile (.env.<name> over .env): the one given, else the one remembered.
+  typeset -g _axle_run_profile=''
+  if (( ! pset )) && _axle_run_yours_get $root profile; then
+    _axle_run_profile=$REPLY
+  fi
   _axle_run_parts $root && parts=($reply)
+  if (( pset )); then
+    _axle_run_profile_use $root $profile $parts || return 1
+    _axle_run_profile=$REPLY
+    _axle_run_parts $root && parts=($reply)        # (with its .env files)
+  fi
 
   if (( dry )); then
     _axle_run_dry $root "${parts[@]}"
@@ -408,6 +431,8 @@ _axle_cmd_run() {
     _axle_run_ago ${_axle_run_when[$root]}
     _axle_printp "%F{$accent}↩%f %B${name//\%/%%}%b %F{$muted}(last worked on ${REPLY})%f"
   fi
+  [[ -n $_axle_run_profile ]] &&
+    _axle_printp "%F{$muted}profile ${_axle_run_profile//\%/%%}: .env.${_axle_run_profile//\%/%%} over .env (--profile none to drop it)%f"
   local from=$PWD
   [[ ${PWD:a} == $root || ${PWD:a} == $root/* ]] || cd -- $root || return 1
 
@@ -557,8 +582,15 @@ _axle_cmd_run() {
     _axle_run_detect $dir || return 1
     _axle_run_ready $dir $svc $yes || return 1
     _axle_run_say_cmd $dir
+    _axle_emit run-start $svc $dir ${_axle_run_kind:-task}
     _axle_run_exec $dir
-    return
+    local -i code=$?
+    if (( code && code != 130 && code != 143 )); then   # (not when stopped: Ctrl-C, TERM)
+      _axle_emit run-crash $svc $code
+    else
+      _axle_emit run-stop $svc
+    fi
+    return $code
   fi
   (( ${#sessions} )) && _axle_run_tmux_show $sessions[1]
   (( ! ${#failed} ))
@@ -571,6 +603,7 @@ _axle_run_dry() {
   local REPLY p dir name=${root:t} venv
   _axle_printp "%B${name//\%/%%}%b"
   print -r -- "  root   ${root/#$HOME/~}"
+  [[ -n $_axle_run_profile ]] && print -r -- "  profile $_axle_run_profile (.env.$_axle_run_profile over .env)"
   print -r -- "  why    $_axle_run_why${_axle_run_marker:+ · marked by $_axle_run_marker}"
   if _axle_venv_find $root; then
     local found=$REPLY
@@ -606,6 +639,12 @@ _axle_run_dry() {
     _axle_run_show $dir
     print -r -- "${ind}run    $REPLY"
     print -r -- "${ind}how    $_axle_run_what ($_axle_run_reason)"
+    (( ${#_axle_run_yours} )) &&
+      print -r -- "${ind}yours  ${(j:, :)_axle_run_yours} (axle run set; axle run forget drops them)"
+    if [[ -n $_axle_run_profile || ${_axle_run_yours[(Ie)env-file]} -gt 0 ]]; then
+      local -a ef=(${_axle_run_envfiles#$dir/})
+      print -r -- "${ind}env    ${(j: then :)ef}"
+    fi
     case $_axle_run_kind in
       service) print -r -- "${ind}kind   service${_axle_run_port:+ on http://localhost:$_axle_run_port} (runs in the background)" ;;
       compose) print -r -- "${ind}kind   docker compose${_axle_run_port:+ (port $_axle_run_port)}: up -d, then down to stop" ;;
@@ -621,6 +660,12 @@ _axle_run_dry() {
       print -r -- "${ind}port   $_axle_run_port is taken by $who: axle run would ${${_axle_run_portway:+offer the next free one}:-ask what to do}"
     fi
     _axle_run_trust_key $dir
-    _axle_run_trusted $REPLY || print -r -- "${ind}trust  not run before: axle run asks first"
+    if (( ! ${_axle_run_yours[(Ie)command]} )) && ! _axle_run_trusted $REPLY; then
+      if [[ $AXLE_RUN_TRUST == always ]]; then
+        print -r -- "${ind}trust  not run before: runs without asking (AXLE_RUN_TRUST=always)"
+      else
+        print -r -- "${ind}trust  not run before: axle run asks first"
+      fi
+    fi
   done
 }

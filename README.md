@@ -7,8 +7,9 @@
 > which is where the branch gets its name. The feature itself is called `axle run`.
 >
 > **It's a work in progress, and `run` is off by default here.** Finding and running projects,
-> background services, ports, and projects with several parts are built and being tested. Per-project
-> settings, crash diagnosis and a live monitor are planned. `axle run` isn't described in the rest
+> background services, ports, projects with several parts, and your own per-project settings
+> (`axle run set`, `--profile`) are built and being tested. Crash diagnosis and a live monitor
+> are planned. `axle run` isn't described in the rest
 > of this README yet, and the plan is in [docs/legionary/ROADMAP.md](docs/legionary/ROADMAP.md).
 >
 > **To try it,** on this branch:
@@ -18,6 +19,7 @@
 > axle run --dry-run    # what would run, and why; runs nothing
 > axle run              # asks before a project's command runs the first time
 > axle run ls           # what's running (also: stop, restart, logs, open)
+> axle run set port 8080   # your settings for this project (also: command, kind, env-file)
 > axle help run         # everything else
 > ```
 >

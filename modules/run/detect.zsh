@@ -16,6 +16,8 @@
 #                       word), env:<VAR>, python (a file that starts its own server:
 #                       its run() call is given the port), or empty (it can't be)
 #     _axle_run_env     extra environment for it (NAME=value), e.g. a changed port
+#     _axle_run_envfiles  the .env files it reads, in order (yours.zsh)
+#     _axle_run_yours   which of your settings were used (yours.zsh)
 
 # A file's text into REPLY, if it's a regular file under 256 KB. No subprocess.
 _axle_run_read() {
@@ -55,13 +57,13 @@ _axle_run_set() {
 }
 
 _axle_run_detect() {
-  typeset -ga _axle_run_cmd=() _axle_run_env=()
+  typeset -ga _axle_run_cmd=() _axle_run_env=() _axle_run_cmd_detected=()
   typeset -g _axle_run_kind='' _axle_run_port='' _axle_run_what='' _axle_run_reason='' \
              _axle_run_source='' _axle_run_portway='' _axle_run_use_venv=''
   typeset -gi _axle_run_self=0
-  _axle_run_detect_any $1 || return 1
-  _axle_run_detect_port $1
-  return 0
+  _axle_run_yours_files $1                         # which .env files (yours.zsh)
+  _axle_run_detect_any $1 && _axle_run_detect_port $1
+  _axle_run_yours_apply $1                         # your settings over it
 }
 
 _axle_run_detect_any() {
@@ -122,7 +124,7 @@ _axle_run_detect_port() {
   esac
   if [[ $_axle_run_portway == env:PORT ]]; then
     local -a reply
-    (( $+functions[_axle_run_envfile] )) && _axle_run_envfile $root/.env &&
+    _axle_run_dotenv $root &&
       for f in $reply; do [[ $f == (#b)PORT=([0-9](#c2,5)) ]] && _axle_run_port=$match[1]; done
   fi
   return 0
