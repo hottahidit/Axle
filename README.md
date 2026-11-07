@@ -8,8 +8,8 @@
 >
 > **It's a work in progress, and `run` is off by default here.** Finding and running projects,
 > background services, ports, projects with several parts, and your own per-project settings
-> (`axle run set`, `--profile`) are built and being tested. Crash diagnosis and a live monitor
-> are planned. `axle run` isn't described in the rest
+> (`axle run set`, `--profile`), and crash diagnosis (the fix on the line with Esc Esc) are built
+> and being tested. A live monitor is planned. `axle run` isn't described in the rest
 > of this README yet, and the plan is in [docs/legionary/ROADMAP.md](docs/legionary/ROADMAP.md).
 >
 > **To try it,** on this branch:

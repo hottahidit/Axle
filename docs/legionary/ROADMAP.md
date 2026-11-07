@@ -194,13 +194,21 @@ Each milestone ends with its tests passing (Linux + macOS CI) and is usable on i
   `AXLE_RUN_TRUST=ask|always`.
 - **Done when:** an override survives a re-run and a new shell; hooks fire once each.
 
-### M6 · When it goes wrong
+### M6 · When it goes wrong ✔
 - A crashed service's last lines are read for known causes: `ModuleNotFoundError: x` →
   `pip install x` (into the venv), `Cannot find module` / no `node_modules` → `npm install`,
   `address already in use` → M3's choice, missing venv → offer to create it,
   database not reachable (compose / port) → start it first.
 - The suggestion goes on the line through the `fix` module (Esc Esc after a crash).
 - **Done when:** each known cause in the fixtures yields the right suggestion.
+- Built: `modules/run/diagnose.zsh`. A taken port suggests `axle run set port <free one>`
+  (M3's choice happens before the start; a crash means something else took it). It's also
+  said by `axle run logs` for a crashed service, and for a foreground task from the project
+  alone (its output isn't kept). The fix stays for Esc Esc until the next command.
+- Added: shared venvs ("uni-venvs", `modules/run/deps.zsh`). A folder's `.venv` serves the
+  Python projects under it that have none (`AXLE_RUN_UNIVENV` folders get one made);
+  `axle run deps` installs into it with its installed versions as pip constraints, and a
+  project that conflicts gets its own `.venv`.
 
 ### M7 · `axle run top`
 - A live view (in the shell, no extra tools): each service's state, uptime, CPU, memory, port,

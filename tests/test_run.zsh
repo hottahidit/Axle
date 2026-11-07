@@ -1277,3 +1277,178 @@ test_run_open_and_trust_settings() {
   [[ $out == *ASKED* ]] && fail "not asked: $out"
   return 0
 }
+
+# --- M6: when it goes wrong -----------------------------------------------------------
+
+# diag <dir> <log text>: diagnose it from <dir>; "cause|remedy" in REPLY.
+diag() {
+  print -r -- "$2" > $T/diag.log
+  local here=$PWD; cd $1
+  _axle_run_diagnose $1 $T/diag.log $3; local -i st=$?
+  cd $here
+  REPLY="$_axle_run_cause|$_axle_run_remedy"
+  return st
+}
+
+# Each known cause in a log yields its fix.
+test_run_diagnose_known_causes() {
+  AXLE_MODULES=(run) load_tool
+  _axle_run_explain >/dev/null 2>&1                # (loads it)
+  local REPLY py=python3; (( $+commands[python3] )) || py=python
+  local missing="Traceback (most recent call last):
+  File \"app.py\", line 1, in <module>
+    import flask
+ModuleNotFoundError: No module named 'flask'"
+  # Python: a venv without it; listed in requirements.txt; no venv; another import name.
+  mkdir -p $T/py1/.venv/bin $T/py2/.venv/bin; : > $T/py1/.venv/pyvenv.cfg; : > $T/py1/app.py
+  ln -s ${commands[$py]} $T/py1/.venv/bin/python; ln -s ${commands[$py]} $T/py2/.venv/bin/python
+  diag $T/py1 "$missing"
+  assert_eq "$REPLY" "no module named flask (not installed in .venv)|.venv/bin/pip install flask" "venv"
+: > $T/py2/.venv/pyvenv.cfg; print 'Flask==3.0  # web' > $T/py2/requirements.txt
+  diag $T/py2 "$missing"
+  assert_eq "$REPLY" "no module named flask: requirements.txt isn't installed in .venv|.venv/bin/pip install -r requirements.txt" "requirements"
+  mkdir -p $T/py3; : > $T/py3/app.py
+  diag $T/py3 "ImportError: No module named yaml.loader"
+  assert_eq "$REPLY" "no module named yaml, and the project has no venv|$py -m venv .venv && .venv/bin/pip install pyyaml" "no venv"
+  mkdir -p $T/py5/env; : > $T/py5/env/pyvenv.cfg; : > $T/py5/app.py   # (no bin/python)
+  diag $T/py5 "$missing"
+  assert_eq "$REPLY" "no module named flask, and env has no working Python|$py -m venv --clear env && env/bin/pip install flask" "broken venv"
+  mkdir -p $T/py4/models; : > $T/py4/app.py
+  diag $T/py4 "ModuleNotFoundError: No module named 'models'"
+  assert_contains "$REPLY" "it's in the project"
+  # Node: no node_modules (pnpm); installed but missing one; not in package.json; a bin.
+  mkdir -p $T/n1; print '{"dependencies": {"express": "^4"}}' > $T/n1/package.json; : > $T/n1/pnpm-lock.yaml
+  diag $T/n1 "Error: Cannot find module 'express'"
+  assert_eq "$REPLY" "its packages aren't installed (no node_modules)|pnpm install" "node_modules"
+  mkdir -p $T/n2/node_modules; print '{"dependencies": {"@acme/ui": "1"}}' > $T/n2/package.json
+  diag $T/n2 "Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@acme/ui/button' imported from x"
+  assert_eq "$REPLY" "@acme/ui isn't installed (it's in package.json)|npm install" "scoped"
+  diag $T/n2 "Error: Cannot find module 'lodash/merge'"
+  assert_eq "$REPLY" "lodash isn't in package.json|npm install lodash" "not in package.json"
+  diag $T/n2 "sh: 1: vite: not found"
+  assert_eq "$REPLY" "vite isn't installed (node_modules is missing it)|npm install" "a bin"
+  diag $T/n2 "Error: Cannot find module '/srv/app/main.js'"
+  assert_eq "$REPLY" "a file it imports is missing: /srv/app/main.js|" "its own file"
+  # A port that's taken: from the message, or the service's port.
+  diag $T/n2 "Error: listen EADDRINUSE: address already in use :::3000"
+  [[ $REPLY == "port 3000 is taken"*"|axle run set port "<->" && axle run" ]] || fail "EADDRINUSE: $REPLY"
+  diag $T/py1 " * Serving Flask app 'app'
+Address already in use
+Port 5000 is in use by another program. Either identify and stop that program, or start the server with a different port."
+  [[ $REPLY == "port 5000 is taken"* ]] || fail "werkzeug: $REPLY"
+  diag $T/py1 "OSError: [Errno 98] Address already in use" 8123
+  [[ $REPLY == "port 8123 is taken"* ]] || fail "the service's port: $REPLY"
+  # A database: in the compose file (by image), else not running.
+  mkdir -p $T/db1; print 'services:\n  web:\n    build: .\n  store:\n    image: "postgres:16"\nvolumes:\n  data:' > $T/db1/compose.yaml
+  diag $T/db1 'psycopg2.OperationalError: connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused'
+  assert_eq "$REPLY" "can't reach postgres (:5432): it's store in compose.yaml, not started|docker compose up -d store" "compose"
+  diag $T/n2 "Error 111 connecting to localhost:6379. Connection refused."
+  assert_contains "$REPLY" "can't reach redis on :6379: it isn't running"
+  # From another folder: cd there first.
+  _axle_run_diagnose $T/n1 $T/diag.log >/dev/null
+  print -r -- "Error: Cannot find module 'express'" > $T/diag.log
+  _axle_run_diagnose $T/n1 $T/diag.log
+  assert_eq "$_axle_run_remedy" "cd $T/n1 && pnpm install" "cd"
+  # Nothing in the log: the project (no node_modules); else nothing known.
+  diag $T/n1 "it failed"
+  assert_eq "$REPLY" "its packages aren't installed (no node_modules)|pnpm install" "state"
+  diag $T/py1 "something else" && fail "unknown: $REPLY"
+  return 0
+}
+
+# A crash says why, and its fix goes to Esc Esc / fix until the next command.
+test_run_crash_fix_on_the_line() {
+  AXLE_MODULES=(run fix) load_tool
+  mkdir -p $T/api/.venv/bin; : > $T/api/.venv/pyvenv.cfg; : > $T/api/main.py
+  ln -s ${commands[python3]:-${commands[python]}} $T/api/.venv/bin/python
+  cd $T/api
+  axle run set command sh -c "echo \"ModuleNotFoundError: No module named 'requests'\"; exit 1" >/dev/null
+  axle run set kind service >/dev/null
+  axle run --yes > $T/out 2>&1
+  local out=$(<$T/out)
+  assert_contains "$out" "no module named requests (not installed in .venv)"
+  assert_contains "$out" ".venv/bin/pip install requests && axle run restart api"
+  assert_contains "$out" "Esc Esc puts it on the line"
+  assert_eq "$_axle_run_fix" ".venv/bin/pip install requests && axle run restart api" "for Esc Esc"
+  # `fix` reads it (its own command doesn't clear it); then any other command does.
+  _axle_run_fix_clear fix
+  _axle_fix_cmd; local line; read -z line
+  assert_eq "$line" ".venv/bin/pip install requests && axle run restart api" "fix"
+  axle run logs api > $T/out 2>&1
+  assert_contains "$(<$T/out)" "no module named requests"
+  _axle_run_fix_clear ls
+  assert_eq "$_axle_run_fix" "" "cleared by the next command"
+  (( ${preexec_functions[(Ie)_axle_run_fix_clear]} )) && fail "and unhooked"
+  axle run stop api >/dev/null 2>&1
+  # A task in the foreground: from the project (its packages aren't installed).
+  mkdir -p $T/cli; print '{"dependencies": {"chalk": "5"}}' > $T/cli/package.json
+  cd $T/cli
+  axle run set command sh -c 'exit 1' >/dev/null
+  axle run --yes > $T/out 2>&1
+  assert_contains "$(<$T/out)" "its packages aren't installed (no node_modules)"
+  assert_eq "$_axle_run_fix" "npm install && axle run" "task"
+  return 0
+}
+
+# A fake venv at <path>: python, and a pip that logs what it's asked (and the pins it's
+# given), and fails to resolve with pins when $T/conflict exists. Flask 3.0.0 installed.
+fake_venv() {
+  mkdir -p $1/bin $1/lib/python3.12/site-packages/Flask-3.0.0.dist-info
+  : > $1/pyvenv.cfg
+  ln -s ${commands[python3]:-${commands[python]}} $1/bin/python
+  print -r -- '#!/bin/sh
+echo "pip $* (in $PWD)" >> "'$T'/pip.log"
+while [ $# -gt 0 ]; do
+  if [ "$1" = -c ]; then cat "$2" >> "'$T'/pip.log"; [ -e "'$T'/conflict" ] && { echo "ERROR: ResolutionImpossible"; exit 1; }; fi
+  shift
+done
+echo installed' > $1/bin/pip
+  chmod +x $1/bin/pip
+}
+
+# axle run deps: into the shared venv (made the first time), keeping its versions; its own
+# venv when they conflict, used from then on; pyproject.toml's dependencies.
+test_run_deps_shared_venv() {
+  AXLE_MODULES=(run) load_tool
+  (( $+commands[python3] || $+commands[python] )) || return 0
+  _axle_run_unifolder x                            # (loads it)
+  _axle_run_mkvenv() { fake_venv $1 }
+  _axle_run_diagnose >/dev/null 2>&1
+  local REPLY out; local -a reply
+  typeset -g AXLE_RUN_UNIVENV="$T/Projects"
+  mkdir -p $T/Projects/a $T/Projects/b
+  print 'flask==3.0.0' > $T/Projects/a/requirements.txt
+  print 'flask==2.0.0' > $T/Projects/b/requirements.txt
+  # No venv yet: a crash offers it.
+  diag $T/Projects/a "ModuleNotFoundError: No module named 'flask'"
+  assert_eq "$REPLY" "no module named flask, and the project has no venv (it can share $T/Projects/.venv)|axle run deps" "no venv yet"
+  cd $T/Projects/a
+  axle run deps > $T/out 2>&1 || fail "deps: $(<$T/out)"
+  out=$(<$T/out)
+  assert_contains "$out" "the shared venv for $T/Projects (AXLE_RUN_UNIVENV) doesn't exist yet"
+  assert_contains "$(<$T/pip.log)" "pip install -c $_axle_run_dir/deps.$$.pins -r requirements.txt (in $T/Projects/a)"
+  assert_contains "$(<$T/pip.log)" "Flask==3.0.0"
+  [[ -e $_axle_run_dir/deps.$$.pins || -e $_axle_run_dir/deps.$$.log ]] && fail "leaves its files"
+  _axle_venv_find $T/Projects/a; assert_eq "$REPLY" "$T/Projects/.venv" "a uses it"
+  # Another import: into the shared one, with its name on PyPI.
+  diag $T/Projects/a "ModuleNotFoundError: No module named 'yaml'"
+  assert_eq "$REPLY" "no module named yaml (not in the shared venv $T/Projects/.venv)|axle run deps pyyaml" "shared"
+  # A conflict: b gets its own, and keeps it.
+  : > $T/pip.log; : > $T/conflict
+  cd $T/Projects/b
+  axle run deps > $T/out 2>&1 || fail "deps b: $(<$T/out)"
+  assert_contains "$(<$T/out)" "conflict with the shared venv's, so b gets its own: .venv"
+  assert_contains "$(<$T/pip.log)" "pip install -r requirements.txt (in $T/Projects/b)"
+  _axle_venv_find $T/Projects/b; assert_eq "$REPLY" "$T/Projects/b/.venv" "b's own"
+  diag $T/Projects/b "ModuleNotFoundError: No module named 'yaml'"
+  assert_eq "$REPLY" "no module named yaml (not installed in .venv)|.venv/bin/pip install pyyaml" "its own"
+  # pyproject.toml's dependencies; outside the folders, its own venv.
+  mkdir -p $T/solo; print '[project]\nname = "solo"\ndependencies = [\n  "requests>=2",  # http\n  '"'rich'"',\n]\n\n[tool.x]\ndependencies = ["no"]' > $T/solo/pyproject.toml
+  _axle_run_deps_list $T/solo; assert_eq "${(j:|:)reply}" "requests>=2|rich" "pyproject"
+  : > $T/pip.log; rm $T/conflict
+  cd $T/solo
+  axle run deps click > $T/out 2>&1 || fail "deps solo: $(<$T/out)"
+  assert_contains "$(<$T/pip.log)" "pip install requests>=2 rich click (in $T/solo)"
+  [[ -e $T/solo/.venv/pyvenv.cfg ]] || fail "solo's own venv"
+  return 0
+}

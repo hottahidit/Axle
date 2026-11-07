@@ -88,7 +88,8 @@ _axle_complete() {
       if (( CURRENT == 3 )) && [[ $PREFIX != -* ]]; then
         _values action 'ls[what is running]' 'stop[stop a service]' 'restart[restart a service]' \
           'logs[a service'"'"'s output]' 'open[open its URL]' 'set[this project'"'"'s settings]' \
-          'forget[drop this project'"'"'s settings and approvals]'
+          'forget[drop this project'"'"'s settings and approvals]' \
+          'deps[install its Python packages (a shared venv if they fit)]'
         (( $+functions[_axle_jump_complete] )) && { shift words; (( CURRENT-- )); _axle_jump_complete }
       elif [[ $words[3] == set ]]; then
         case $CURRENT in

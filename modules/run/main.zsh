@@ -372,6 +372,7 @@ _axle_cmd_run() {
     open)     shift; _axle_run_open "$@"; return ;;
     set)      shift; _axle_run_set_cmd "$@"; return ;;
     forget)   shift; _axle_run_forget_project "$@"; return ;;
+    deps)     shift; _axle_run_deps "$@"; return ;;
   esac
   local dry=0 yes=0 mode='' config=0 only=0 vset=0 profile='' pset=0
   local -a words=() vnames=()
@@ -587,6 +588,7 @@ _axle_cmd_run() {
     local -i code=$?
     if (( code && code != 130 && code != 143 )); then   # (not when stopped: Ctrl-C, TERM)
       _axle_emit run-crash $svc $code
+      _axle_run_explain $dir '' 'axle run' $_axle_run_port
     else
       _axle_emit run-stop $svc
     fi

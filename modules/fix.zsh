@@ -10,7 +10,8 @@
 #   apt install htop      → sudo apt install htop (needs root)
 #
 # Esc Esc on an empty line: the fix, or the last command with sudo. On a line you're
-# typing: adds or removes sudo.
+# typing: adds or removes sudo. After `axle run` says why a service or task failed (a
+# missing package, a port that's taken, a database not started), its fix comes first.
 #
 #   AXLE_FIX_CMD=fix      the command's name ('' = none; Esc Esc still works)
 #   AXLE_FIX_KEY='^[^['   the key (Esc Esc; '' = none)
@@ -162,6 +163,9 @@ _axle_fix_suggest() {
 
 # `fix`: the corrected last command, on the line to check.
 _axle_fix_cmd() {
+  if [[ -n $_axle_run_fix ]]; then                 # (axle run's, until the next command)
+    print -z -r -- "$_axle_run_fix"; _axle_run_fix=''; return 0
+  fi
   local last=$_axle_ev_last_cmd
   [[ -n $last ]] || { print -u2 "axle: nothing to fix yet"; return 1 }
   if (( _axle_ev_last_exit == 0 )); then
@@ -178,8 +182,11 @@ _axle_fix_cmd() {
 axle-fix() {
   if [[ -z $BUFFER ]]; then
     local last=$_axle_ev_last_cmd
-    [[ -n $last ]] || return 0
-    if (( _axle_ev_last_exit )) && _axle_fix_suggest "$last" $_axle_ev_last_exit "$_axle_ev_last_dir"; then
+    if [[ -n $_axle_run_fix ]]; then
+      BUFFER=$_axle_run_fix
+    elif [[ -z $last ]]; then
+      return 0
+    elif (( _axle_ev_last_exit )) && _axle_fix_suggest "$last" $_axle_ev_last_exit "$_axle_ev_last_dir"; then
       BUFFER=$REPLY
     else
       BUFFER="sudo $last"

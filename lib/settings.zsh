@@ -81,6 +81,7 @@ typeset -gA _axle_settings=(
   AXLE_RUN_VENV         'tool|choice:ask,project,active|ask|axle run, when another venv is active: ask, or use the project'"'"'s or the active one'
   AXLE_RUN_ON_EXIT      'tool|choice:keep,stop|keep|axle run'"'"'s services when their terminal closes: keep running, or stop'
   AXLE_RUN_OPEN         'tool|bool|0|axle run: open the browser when a service is ready'
+  AXLE_RUN_UNIVENV      'tool|text||axle run deps: folders whose Python projects share one venv (folder/.venv), e.g. ~/Projects'
   AXLE_RUN_TRUST        'tool|choice:ask,always|ask|axle run: ask before a project'"'"'s command runs the first time (always: never ask)'
 )
 

@@ -92,6 +92,25 @@ New:
   - Settings: `AXLE_RUN_ON_EXIT=stop` (services end with the terminal that started them),
     `AXLE_RUN_OPEN=1` (open the browser once a service answers; not on a restart),
     `AXLE_RUN_TRUST=always` (never ask before a project's command runs).
+  - When it goes wrong, it says why and how to fix it: a crashed service (under its log,
+    and again with `axle run logs`) or a failed task is looked at for known causes, and the
+    fix goes on the line with Esc Esc or `fix`, until your next command; nothing runs by
+    itself. A missing Python module → `pip install` into the project's venv
+    (`-r requirements.txt` if it's listed there, `uv sync` with uv; a venv is created if
+    there's none or it's broken); `Cannot find module`, `vite: not found` or no
+    `node_modules` → `npm` / `pnpm` / `yarn` / `bun install` (or `add` one that's not in
+    package.json); a taken port → `axle run set port <free one>`; a database that isn't
+    reachable → `docker compose up -d <its service>` from the project's compose file, else
+    starting it (`sudo service …`, `brew services start …`). Each fix is followed by the
+    command that runs it again.
+  - A venv shared by many projects ("uni-venv"): a folder's `.venv` (e.g. `~/Projects/.venv`)
+    is used by the Python projects under it that have none of their own, and
+    `AXLE_RUN_UNIVENV=~/Projects` makes it the first time it's needed. `axle run deps
+    [pkg...]` installs a project's requirements.txt (or pyproject.toml's dependencies) into
+    it without changing a version already there (pip gets them as constraints); a project
+    whose versions conflict gets its own `.venv` instead, used from then on. Without a
+    shared venv it installs into the project's own (making it if needed). Crash fixes for a
+    missing module use `axle run deps` there.
   - A missing program (pnpm, cargo, ...) is said before anything is asked, with how to
     install it; answering no to "Run <last project>?" leaves you where you were and lists the
     other projects you worked in lately, to run one of them instead (Esc: none), and

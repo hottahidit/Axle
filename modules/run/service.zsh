@@ -467,6 +467,8 @@ _axle_run_bg() {
       _axle_run_get $dir code
       _axle_printp "%F{$err}✘%f %B${name//\%/%%}%b exited (code $REPLY). Its log:"
       _axle_run_show_log $dir/log
+      _axle_run_get $dir port
+      _axle_run_explain $root $dir/log "axle run restart $name" $REPLY
       return 1 ;;
     *)
       if [[ ! -d $dir ]]; then
@@ -612,11 +614,19 @@ _axle_run_logs() {
   [[ -r $dir/log ]] || { print -r -- "$name: no output yet"; return 0 }
   # Looking at a crash is what clears its red tab.
   _axle_run_get $dir state
-  [[ $REPLY == crashed ]] && command rm -f -- $_axle_run_drops/run-$name
+  local crashed=$REPLY
+  [[ $crashed == crashed ]] && command rm -f -- $_axle_run_drops/run-$name
   if (( follow )); then
     command tail -n 50 -f -- $dir/log
   else
     command tail -n 50 -- $dir/log
+    if [[ $crashed == crashed ]]; then                # and why, if it's a known cause
+      local root port
+      _axle_run_get $dir root; root=$REPLY
+      _axle_run_get $dir port; port=$REPLY
+      [[ -d $root ]] && _axle_run_explain $root $dir/log "axle run restart $name" $port
+    fi
+    return 0
   fi
 }
 
