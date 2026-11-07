@@ -102,7 +102,8 @@ _axle_complete() {
           'forget[drop this project'"'"'s settings and approvals]' \
           'deps[install its Python packages (a shared venv if they fit)]' \
           'top[the services live: CPU, memory, logs]' \
-          'env[what a service here gets]' 'group[several projects together]'
+          'env[what a service here gets]' 'group[several projects together]' \
+          'sh[a shell with what a service gets]' 'exec[a command with what a service gets]'
         (( $+functions[_axle_jump_complete] )) && { shift words; (( CURRENT-- )); _axle_jump_complete }
       elif [[ $words[3] == top ]]; then
         _values option '--mini[a few lines under the prompt]' '--full[the whole terminal]'
@@ -130,6 +131,11 @@ _axle_complete() {
         compadd -a profs
       elif [[ $words[3] == ls ]]; then
         compadd -- --json
+      elif [[ $words[3] == (sh|shell) ]] || [[ $words[3] == exec && $words[CURRENT-1] == -s ]]; then
+        compadd -a svcs
+      elif [[ $words[3] == exec ]]; then
+        (( CURRENT == 4 )) && compadd -- -s
+        compadd -k commands
       elif [[ $words[3] == (stop|restart|logs|open) ]]; then
         [[ $words[3] == (stop|logs) ]] && svcs+=(all)
         [[ $words[3] == logs ]] && compadd -- -f -n

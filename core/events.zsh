@@ -102,8 +102,10 @@ _axle_hist_record() {
   [[ -n ${cmd//[[:space:]]/} && $cmd != ' '* ]] || return
   cmd=${cmd%%[[:space:]]#}
   local dur; printf -v dur '%.2f' $2
+  # (a folder's name is outside text: a tab or newline in it would make a record of its own)
+  local dir=${${${_axle_ev_dir:-$PWD}//$'\t'/ }//$'\n'/\\n}
   mkdir -p ${_axle_hist_file:h} 2>/dev/null
-  print -r -- "$EPOCHSECONDS"$'\t'"$1"$'\t'"$dur"$'\t'"${_axle_ev_dir:-$PWD}"$'\t'"${${_axle_ev_prev//$'\t'/ }//$'\n'/\\n}"$'\t'"${${cmd//$'\t'/ }//$'\n'/\\n}" >> $_axle_hist_file 2>/dev/null
+  print -r -- "$EPOCHSECONDS"$'\t'"$1"$'\t'"$dur"$'\t'"$dir"$'\t'"${${_axle_ev_prev//$'\t'/ }//$'\n'/\\n}"$'\t'"${${cmd//$'\t'/ }//$'\n'/\\n}" >> $_axle_hist_file 2>/dev/null
   _axle_ev_prev=$cmd
 }
 

@@ -81,7 +81,7 @@ _axle_run_needs() {
   # The first time: asked (it's the project's compose file that runs).
   local text=''
   _axle_run_read $compose && text=$REPLY
-  _axle_run_hash "needs"$'\0'"$compose"$'\0'"${(j:\0:)start}"$'\0'"$text"
+  _axle_run_hash256 "needs"$'\0'"$compose"$'\0'"${(j:\0:)start}"$'\0'"$text"
   local key="$compose"$'\t'"needs:$REPLY"
   if ! _axle_run_trusted $key; then
     if (( ! yes )) && [[ $AXLE_RUN_TRUST != always ]]; then

@@ -1,4 +1,4 @@
-# Your settings for `axle run` (M5 of docs/legionary/ROADMAP.md): a project's overrides,
+# Your settings for `axle run`: a project's overrides,
 # profiles, and the run-* hook events. Loaded when first needed.
 #
 # Overrides are kept in axle run's state, never in the project: the file of the project
@@ -62,6 +62,7 @@ _axle_run_yours_get() {
 # Set one (_axle_run_yours_put <folder> <key> [value]; no value removes it).
 _axle_run_yours_put() {
   local dir=$1 key=$2
+  [[ $3 == *[[:cntrl:]]* ]] && { print -u2 -r -- "axle run set: one line, without control characters"; return 1 }
   _axle_run_state_init && _axle_run_project_file $dir || return 1
   local -a lines=()
   [[ -r $_axle_run_pfile ]] && lines=(${(f)"$(<$_axle_run_pfile)"})
@@ -420,6 +421,9 @@ _axle_run_env_cmd() {
       (( ${+seen[$key]} )) && note="  (over ${seen[$key]})"
       seen[$key]=${f:t}
       _axle_printp "    ${(r:width:)key//\%/%%}  ${REPLY//\%/%%}%F{$muted}${note//\%/%%}%f"
+    done
+    for key in $_axle_run_env_skipped; do
+      _axle_printp "    %F{${_axle_c[warn]:-yellow}}${(r:width:)key//\%/%%}  not given%f %F{$muted}(it changes which programs run: set it in the command)%f"
     done
   done
   (( any )) || _axle_printp "  %F{$muted}no .env file%f"

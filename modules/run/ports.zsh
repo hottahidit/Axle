@@ -1,4 +1,4 @@
-# Ports for `axle run` (M3 of docs/legionary/ROADMAP.md): who holds a port, the next free
+# Ports for `axle run`: who holds a port, the next free
 # one, giving a service another port, and what to do when its port is taken. Loaded when
 # first needed.
 
@@ -122,6 +122,17 @@ _axle_run_resolve_port() {
   fi
   local next=''
   [[ -n $_axle_run_portway ]] && _axle_run_free_port $port && next=$_axle_run_freed
+  # Another checkout of this project (a git worktree) has it: the next one, unasked.
+  if [[ -n $other && -n $next ]]; then
+    local -a reply mine
+    _axle_run_checkout $root && mine=($reply)
+    _axle_run_get $_axle_run_dir/services/$other root
+    if (( ${#mine} )) && _axle_run_checkout $REPLY && [[ $reply[1] == $mine[1] && $reply[2] != $mine[2] ]]; then
+      _axle_printp "%F{$muted}(port $port: ${other//\%/%%}, another checkout of this project; this one gets $next)%f"
+      _axle_run_apply_port $next
+      return 0
+    fi
+  fi
   _axle_printp "%F{$warn}!%f Port $port is taken by ${who//\%/%%}."
   [[ -z $next && -z $_axle_run_portway ]] &&
     _axle_printp "%F{$muted}  (its command can't be given another port)%f"

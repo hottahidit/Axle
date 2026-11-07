@@ -1,4 +1,4 @@
-# Background services for `axle run` (M2 of docs/legionary/ROADMAP.md). Loaded when first
+# Background services for `axle run`. Loaded when first
 # needed.
 #
 # Each service has a supervisor: a small zsh subshell that starts it, waits until its
@@ -117,6 +117,7 @@ _axle_run_log_port() {
 _axle_run_envfile() {
   setopt localoptions extendedglob
   reply=()
+  typeset -ga _axle_run_env_skipped=()
   [[ -f $1 && -r $1 ]] || return 1
   local line key value
   while IFS= read -r line || [[ -n $line ]]; do
@@ -125,6 +126,11 @@ _axle_run_envfile() {
     line=${line#export[[:space:]]##}
     [[ $line == (#b)([A-Za-z_][A-Za-z0-9_]#)[[:space:]]#=[[:space:]]#(*) ]] || continue
     key=$match[1] value=$match[2]
+    # Not these: they change which programs run, or what runs before them (a project's
+    # .env could set PATH=./bin:... or LD_PRELOAD under the command you approved).
+    if [[ $key == (PATH|LD_*|DYLD_*|BASH_ENV|ENV|ZDOTDIR|IFS|SHELLOPTS|PS4) ]]; then
+      _axle_run_env_skipped+=($key); continue
+    fi
     if [[ $value == \"*\" || $value == \'*\' ]] && (( ${#value} >= 2 )); then
       value=${value[2,-2]}
     else
@@ -197,7 +203,7 @@ _axle_run_browse() {
 # The service name for a project (part) folder (REPLY): <base> (default: its folder name),
 # made safe; another folder already using it gets -2, -3, ...
 _axle_run_name() {
-  local root=$1 base=${${2:-${1:t}}//[^A-Za-z0-9._-]/-} name
+  local root=$1 base=${${2:-${1:t}}//[^A-Za-z0-9._@-]/-} name
   [[ $base == .* || -z $base ]] && base=project${base}
   local -i n=1
   name=$base
@@ -300,9 +306,12 @@ _axle_run_start() {
   [[ -x /proc/$$/exe ]] && zsh_bin=/proc/$$/exe      # (the very zsh running now)
   _axle_run_put $dir venv "$_axle_run_use_venv"
   (( ${_axle_run_worker:-0} )) && _axle_run_put $dir worker 1
+  [[ -n $_axle_run_approved_key ]] && _axle_run_put $dir approved "$_axle_run_approved_key"
+  [[ -n $_axle_run_proc_now ]] && _axle_run_put $dir proc "$_axle_run_proc_now"
   AXLE_RUN_USE_VENV=$_axle_run_use_venv AXLE_RUN_OWNER=$owner AXLE_RUN_OPEN_URL=$open \
   AXLE_RUN_ONFAIL=$onfail AXLE_RUN_LOG_MAX=${AXLE_RUN_LOG_MAX:-10M} AXLE_RUN_NOTIFY=${AXLE_RUN_NOTIFY:-off} \
   AXLE_RUN_HEALTH=$_axle_run_health AXLE_RUN_WORKER=${_axle_run_worker:-0} \
+  AXLE_RUN_ENV_RELOAD=${AXLE_RUN_ENV_RELOAD:-1} \
   $zsh_bin -f -c 'source "$1/lib/project.zsh" && source "$1/modules/run/service.zsh" &&
                   source "$1/modules/run/supervise.zsh" &&
                   shift && _axle_run_supervise "$@"' axle-run \
@@ -319,12 +328,30 @@ _axle_run_start() {
 
 # --- the commands -----------------------------------------------------------------------
 
+# A service's output on your terminal: its colours kept, its other escape sequences (a
+# window title, the clipboard, clearing the screen, moving the cursor) and control
+# characters taken out. An awk function: clean(line).
+typeset -g _axle_run_awk_clean='
+function clean(t) {
+  gsub(/\033\][^\007\033]*(\007|\033\\)?/, "", t)
+  gsub(/\033\[[0-9;?]*[@-ln-~]/, "", t)
+  gsub(/\033[^[]/, "", t)
+  gsub(/[\001-\010\013-\032\034-\037\177]/, "", t)
+  return t
+}'
+
+# Lines of output to the terminal, cleaned (a pipe gets them as they are).
+_axle_run_clean() {
+  if [[ -t 1 ]]; then LC_ALL=C command awk "$_axle_run_awk_clean"' { print clean($0); fflush() }'
+  else command cat; fi
+}
+
 # A failed service's whole log, indented, between rules (it's the evidence).
 _axle_run_show_log() {
   local muted=${_axle_c[muted]:-244} line
   _axle_printp "%F{$muted}  ┌─ ${${1/#$HOME/~}//\%/%%}%f"
   if [[ -s $1 ]]; then
-    while IFS= read -r line || [[ -n $line ]]; do print -r -- "  │ $line"; done < $1
+    LC_ALL=C command awk "$_axle_run_awk_clean"' { print "  │ " clean($0) }' $1
   else
     _axle_printp "  │ %F{$muted}(no output)%f"
   fi
@@ -567,6 +594,18 @@ _axle_run_restart() {
   _axle_run_get $dir health; local _axle_run_health=$REPLY
   _axle_run_get $dir worker; local -i _axle_run_worker=${REPLY:-0}
   [[ -r $dir/cmd ]] || { print -u2 "axle run: don't know how $name was started"; return 1 }
+  # What it runs now is still what you approved (a git pull can change a script).
+  if _axle_run_get $dir approved && [[ $REPLY != yours ]]; then
+    local approved=$REPLY
+    _axle_run_get $dir proc; typeset -g _axle_run_proc=$REPLY
+    local keep="$_axle_run_health"$'\0'"$_axle_run_onfail"$'\0'"$_axle_run_use_venv"$'\0'"$_axle_run_worker"
+    if ! _axle_run_detect $root || { _axle_run_trust_key $root; [[ $REPLY != $approved ]] }; then
+      print -u2 -r -- "axle run: what $name runs has changed since you approved it: axle run (it asks again)"
+      return 1
+    fi
+    local -a kept=("${(@0)keep}")                  # (detecting set these: back as they were)
+    _axle_run_health=$kept[1] _axle_run_onfail=$kept[2] _axle_run_use_venv=$kept[3] _axle_run_worker=$kept[4]
+  fi
   local -a reply words extra=()
   _axle_run_words $dir/cmd; words=($reply)
   [[ -r $dir/env ]] && { _axle_run_words $dir/env; extra=($reply) }
@@ -603,8 +642,10 @@ _axle_run_logs_all() {
   (( follow )) && opts+=(-F)
   # tail marks each file's lines with "==> <file> <==" (after a blank line): those become
   # the name in front of each line.
-  command tail $opts -- $files 2>/dev/null | command awk -v w=$width -v c=$colour -v one=$names[1] \
-    -v all="${(j: :)names}" '
+  local -i tty=0
+  [[ -t 1 ]] && tty=1
+  command tail $opts -- $files 2>/dev/null | LC_ALL=C command awk -v w=$width -v c=$colour -v one=$names[1] \
+    -v all="${(j: :)names}" -v tty=$tty "$_axle_run_awk_clean"'
     BEGIN { n = split(all, a, " "); for (i = 1; i <= n; i++) col[a[i]] = 31 + i % 6; cur = one }
     /^==> .* <==$/ { p = $0; sub(/^==> /, "", p); sub(/\/log <==$/, "", p); k = split(p, b, "/"); cur = b[k]; blank = 0; next }
     /^$/ { blank++; next }
@@ -612,7 +653,7 @@ _axle_run_logs_all() {
       tag = sprintf("%-" w "s │", cur)
       if (c) tag = "\033[" col[cur] "m" tag "\033[0m"
       for (; blank > 0; blank--) print tag
-      print tag " " $0; fflush()
+      print tag " " (tty ? clean($0) : $0); fflush()
     }'
   return 0
 }
@@ -649,9 +690,9 @@ _axle_run_logs() {
   # (In a terminal, which log first; piped, just the log.)
   [[ -t 1 ]] && ! _axle_run_quiet && _axle_printp "%F{${_axle_c[muted]:-244}}── ${name//\%/%%}: ${${dir/#$HOME/~}//\%/%%}/log, the last $lines lines${${follow:#0}:+, then as it grows (Ctrl-C stops)}%f"
   if (( follow )); then
-    command tail -n $lines -f -- $dir/log
+    command tail -n $lines -f -- $dir/log | _axle_run_clean
   else
-    command tail -n $lines -- $dir/log
+    command tail -n $lines -- $dir/log | _axle_run_clean
     if [[ $crashed == crashed && -t 1 ]]; then        # and why, if it's a known cause (not
                                                       # into a pipe: | head, | grep get the log)
       local root port

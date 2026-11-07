@@ -48,11 +48,13 @@ _axle_run_group_cmd() {
       if (( $# )); then
         for p; do
           p=${${p/#\~/$HOME}:a}
+          [[ $p == *[[:cntrl:]]* ]] && { print -u2 -r -- "axle run group: a folder name with control characters"; return 1 }
           [[ -d $p ]] || { print -u2 -r -- "axle run group: no folder ${p/#$HOME/~}"; return 1 }
           given+=($p)
         done
       elif [[ $action == add ]]; then
         _axle_run_root_here || return 1
+        [[ $REPLY == *[[:cntrl:]]* ]] && { print -u2 -r -- "axle run group: a folder name with control characters"; return 1 }
         given=($REPLY)
       fi
       _axle_run_group_load $name; dirs=($reply)
@@ -98,7 +100,7 @@ _axle_run_group_cmd() {
         if [[ ! -d $p ]]; then failed+=(${p:t}); print -u2 -r -- "  gone: ${p/#$HOME/~}"; continue; fi
         _axle_cmd_run $p --bg || failed+=(${p:t})
       done
-      (( ${#failed} )) && { _axle_printp "%F{${_axle_c[error]:-red}}✘%f didn't start: ${(j:, :)failed}"; return 1 }
+      (( ${#failed} )) && { _axle_printp "%F{${_axle_c[error]:-red}}✘%f didn't start: ${${(j:, :)failed}//\%/%%}"; return 1 }
       return 0 ;;
     *)
       print -u2 -r -- "axle run group: $action? (add, rm, stop, or nothing to start them)"

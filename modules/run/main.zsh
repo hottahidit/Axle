@@ -1,5 +1,5 @@
-# `axle run`, loaded when first used (registered by modules/run.zsh). The plan is
-# docs/legionary/ROADMAP.md; this is M0: finding the project, and saying why.
+# `axle run`, loaded when first used (registered by modules/run.zsh): finding the project,
+# saying why, asking before its command runs, and the subcommands.
 #
 # State, under ${XDG_STATE_HOME:-~/.local/state}/axle/run:
 #   services/<name>/   a background service: pid, started, port, url, command, kind, root, log
@@ -22,6 +22,16 @@ _axle_run_hash() {
   REPLY=${out%% *}
 }
 
+# A strong hash of a text (REPLY), for what you approved: SHA-256 (sha256sum, or macOS's
+# shasum), so no other command can be made to match it. (cksum's CRC can be.)
+_axle_run_hash256() {
+  local out
+  if (( $+commands[sha256sum] )); then out=$(print -rn -- "$1" | command sha256sum) || return 1
+  elif (( $+commands[shasum] )); then out=$(print -rn -- "$1" | command shasum -a 256) || return 1
+  else _axle_run_hash "$1"; return; fi
+  REPLY=${out%% *}
+}
+
 # Project roots from the history log, most recently worked in first (reply), with the
 # epoch of the last command in each (_axle_run_when). Folders that are gone, and $HOME
 # itself, don't count.
@@ -32,10 +42,10 @@ _axle_run_recent() {
   local epoch dir root
   local -A seen=()
   local -a found=()
-  command awk -F'\t' 'NF == 6 { l[$4] = $1 } END { for (d in l) print l[d] "\t" d }' \
+  command awk -F'\t' 'NF == 6 && $1 ~ /^[0-9]+$/ { l[$4] = $1 } END { for (d in l) print l[d] "\t" d }' \
       $_axle_hist_file 2>/dev/null | command sort -rn | command head -n 500 |
   while IFS=$'\t' read -r epoch dir; do
-    [[ -d $dir ]] || continue
+    [[ $epoch == <-> && -d $dir ]] || continue
     _axle_project_root $dir || continue
     root=$reply[1]
     (( ${+seen[$root]} )) && continue
@@ -84,6 +94,7 @@ _axle_run_other() {
 
 # How long ago an epoch was, in words (REPLY): "just now", "5m ago", "2h ago", "3d ago".
 _axle_run_ago() {
+  [[ $1 == <-> ]] || { REPLY=''; return 1 }
   local -i s=$(( EPOCHSECONDS - $1 ))
   if   (( s < 60 ));    then REPLY='just now'
   elif (( s < 3600 ));  then REPLY="$(( s / 60 ))m ago"
@@ -168,14 +179,14 @@ _axle_run_pick() {
 _axle_run_trust_key() {
   # The command as detected: another port chosen for this run doesn't make it a new one.
   local -a cmd=(${_axle_run_cmd_detected:-$_axle_run_cmd})
-  _axle_run_hash "$1"$'\0'"${(j:\0:)cmd}"$'\0'"$_axle_run_source" || return 1
+  _axle_run_hash256 "$1"$'\0'"${(j:\0:)cmd}"$'\0'"$_axle_run_source" || return 1
   REPLY="$1"$'\t'"$REPLY"
 }
 
 _axle_run_trusted() {
   local key=$1 line
   [[ -r $_axle_run_dir/trust ]] || return 1
-  while IFS= read -r line; do [[ $line == $key ]] && return 0; done < $_axle_run_dir/trust
+  while IFS= read -r line; do [[ $line == "$key" ]] && return 0; done < $_axle_run_dir/trust
   return 1
 }
 
@@ -190,7 +201,7 @@ _axle_run_trust() {
 _axle_run_show() {
   local root=$1 w
   local -a out=()
-  for w in $_axle_run_cmd; do out+=("${(q-)${w#$root/}}"); done
+  for w in $_axle_run_cmd; do out+=("${(q+)${w#$root/}}"); done   # (q+: control characters as $'\e')
   REPLY=${(j: :)out}
 }
 
@@ -269,6 +280,9 @@ _axle_run_ready() {
 #   _axle_run_approve <dir> <name> <yes>     returns 1 if you said no
 _axle_run_approve() {
   local dir=$1 name=$2 yes=$3 REPLY
+  typeset -g _axle_run_approved_key=''
+  # (the trust file is lines: a newline in a folder's name could approve another one)
+  [[ $dir == *[[:cntrl:]]* ]] && { print -u2 -r -- "axle run: a folder name with control characters (a newline...): not run"; return 1 }
   _axle_run_installed $dir $name || return 1
   _axle_run_trust_key $dir
   local key=$REPLY muted=${_axle_c[muted]:-244}
@@ -289,6 +303,9 @@ _axle_run_approve() {
     fi
     _axle_run_trust $key
   fi
+  # (what was approved: `axle run restart` checks it's still the same)
+  if (( ${_axle_run_yours[(Ie)command]} )); then _axle_run_approved_key=yours
+  else _axle_run_approved_key=$key; fi
   _axle_run_choose_venv $dir $name $yes
 }
 
@@ -385,6 +402,8 @@ _axle_cmd_run() {
     deps)     shift; _axle_run_deps "$@"; return ;;
     env)      shift; _axle_run_env_cmd "$@"; return ;;
     group)    shift; _axle_run_group_cmd "$@"; return ;;
+    sh|shell) shift; _axle_run_sh_cmd "$@"; return ;;
+    exec)     shift; _axle_run_exec_cmd "$@"; return ;;
     :*)       _axle_run_task_cmd "$@"; return ;;
     top)      shift; _axle_run_top "$@"; return ;;
   esac
@@ -483,11 +502,11 @@ _axle_cmd_run() {
 
   _axle_run_start_parts
   if (( ${#sessions} )); then
-    _axle_printp "%F{$muted}tmux sessions: ${(j:, :)sessions} (tmux attach -t <name>; Ctrl-b s to switch)%f"
+    _axle_printp "%F{$muted}tmux sessions: ${${(j:, :)sessions}//\%/%%} (tmux attach -t <name>; Ctrl-b s to switch)%f"
   fi
   # (One part: what happened to it was just said.)
   if (( ${#failed} && ${#chosen} > 1 )); then
-    _axle_printp "%F{${_axle_c[error]:-red}}✘%f didn't start: ${(j:, :)failed}"
+    _axle_printp "%F{${_axle_c[error]:-red}}✘%f didn't start: ${${(j:, :)failed}//\%/%%}"
   fi
   [[ -n $fg ]] && { _axle_run_foreground; return }
   (( ${#sessions} )) && _axle_run_tmux_show $sessions[1]

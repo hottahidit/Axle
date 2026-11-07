@@ -1,4 +1,4 @@
-# Projects with several runnable parts (M4 of docs/legionary/ROADMAP.md): a frontend and
+# Projects with several runnable parts: a frontend and
 # a backend, npm / pnpm workspaces, a Cargo workspace, apps/*, services/*. Which parts to
 # start is asked the first time (or with --config) and saved per project; --verbose shows
 # chosen parts' output: each in its own tmux session, or one in this shell.
@@ -20,6 +20,7 @@ _axle_run_parts() {
   cands=($root/^(.*|node_modules|venv|env|dist|build|target|vendor|docs|doc|tests|test|examples|__pycache__|public|static|assets|src|lib|apps|packages|services|crates)(N/)
          $root/(apps|packages|services|crates)/^.*(N/))
   for dir in ${cands[1,40]}; do
+    [[ $dir == *[[:cntrl:]]* ]] && continue        # (a name with a newline: never a part)
     _axle_venv_in ${dir:h} && [[ $REPLY == $dir ]] && continue
     [[ -e $dir/pyvenv.cfg ]] && continue           # a venv
     # A Python package of the project, with no project file of its own, isn't a part.
@@ -33,15 +34,54 @@ _axle_run_parts() {
   (( ${#reply} ))
 }
 
-# A part's service name (REPLY): the project's folder name, then the part's (and its
-# Procfile process: shop-worker, shop-api-worker).
+# The git checkout <dir> is in (reply: the project's main checkout, this checkout's top
+# folder, its branch or ''), from the .git files alone (no git). A worktree's .git is a
+# file: "gitdir: <main>/.git/worktrees/<w>" (or <main>.git/worktrees/<w>, a bare repo).
+_axle_run_checkout() {
+  setopt localoptions extendedglob
+  # (:A, symlinks resolved: git writes the real path, and macOS's /var is /private/var)
+  local d=${1:A} line gd head=''
+  reply=()
+  while [[ ! -e $d/.git ]]; do
+    [[ $d == / || $d == ${HOME:A} ]] && return 1
+    d=${d:h}
+  done
+  if [[ -d $d/.git ]]; then
+    [[ -r $d/.git/HEAD ]] && IFS= read -r head < $d/.git/HEAD
+    reply=($d $d ${${(M)head:#ref: refs/heads/*}#ref: refs/heads/})
+    return 0
+  fi
+  IFS= read -r line < $d/.git 2>/dev/null && [[ $line == 'gitdir: '* ]] || return 1
+  gd=${line#gitdir: }; [[ $gd == /* ]] || gd=${d}/$gd
+  gd=${gd:A}
+  [[ $gd == */worktrees/[^/]## ]] || { reply=($d $d ''); return 0 }   # (a submodule)
+  [[ -r $gd/HEAD ]] && IFS= read -r head < $gd/HEAD
+  local main=${gd:h:h}                             # <main>/.git, or <main>.git (bare)
+  if [[ ${main:t} == .git ]]; then main=${main:h}; else main=${main%.git}; fi
+  reply=($main $d ${${(M)head:#ref: refs/heads/*}#ref: refs/heads/})
+}
+
+# The name a project goes by (REPLY): its folder's. A second checkout of it (a git
+# worktree): the main checkout's folder @ its branch (shop@feature-x; detached: @ its
+# folder), so two checkouts of one project don't share names.
+_axle_run_projname() {
+  setopt localoptions extendedglob
+  local root=${1:A}
+  local -a reply
+  REPLY=${root:t}
+  _axle_run_checkout $root || return 0
+  [[ $reply[1] == $reply[2] || $reply[2] != $root ]] && return 0   # (the main one, or inside)
+  REPLY=${reply[1]:t}@${${reply[3]:-${root:t}}//\//-}
+}
+
+# A part's service name (REPLY): the project's name, then the part's (and its Procfile
+# process: shop-worker, shop-api-worker).
 _axle_run_partname() {
   local root=$1 part=${2%%:*} proc=${2#*:}
   [[ $2 == *:* ]] || proc=''
-  if [[ $part == . ]]; then REPLY=${root:t}
-  else REPLY=${root:t}-${part:t}
-  fi
-  REPLY=${REPLY//[^A-Za-z0-9._-]/-}${proc:+-${proc//[^A-Za-z0-9._-]/-}}
+  _axle_run_projname $root
+  [[ $part != . ]] && REPLY+=-${part:t}
+  REPLY=${REPLY//[^A-Za-z0-9._@-]/-}${proc:+-${proc//[^A-Za-z0-9._-]/-}}
 }
 
 # A part's folder (REPLY), and its Procfile process for the next detection
@@ -59,6 +99,9 @@ _axle_run_part_dir() {
 
 _axle_run_project_file() {
   local REPLY
+  # (its file is lines: a folder with a newline in its name could write one of its own,
+  # command=..., so a name with control characters is refused)
+  [[ $1 == *[[:cntrl:]]* ]] && { print -u2 -r -- "axle run: a folder name with control characters (a newline...): not saved"; return 1 }
   _axle_run_hash $1 || return 1
   typeset -g _axle_run_pfile=$_axle_run_dir/projects/$REPLY
 }
@@ -76,6 +119,7 @@ _axle_run_choice_load() {
 
 _axle_run_choice_save() {
   local root=$1; shift
+  [[ "$*" == *[[:cntrl:]]* ]] && return 1
   _axle_run_state_init && _axle_run_project_file $root || return 1
   local -a other=()
   [[ -r $_axle_run_pfile ]] && other=(${(f)"$(<$_axle_run_pfile)"})

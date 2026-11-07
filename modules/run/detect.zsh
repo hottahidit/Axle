@@ -1,5 +1,5 @@
-# How to run a project: the detection table of docs/legionary/ROADMAP.md (M1: Python,
-# Node, Rust, Go, static sites). Loaded by `axle run` when first needed.
+# How to run a project: what its files say (Python, Node, Rust, Go, compose, Procfile,
+# make / just, static sites). Loaded by `axle run` when first needed.
 #
 # Files are only read, as text (never sourced or run), and only small ones.
 #
@@ -29,6 +29,71 @@ _axle_run_read() {
   return 0
 }
 
+# package.json's scripts, as npm reads them: the top-level "scripts" object only (not one
+# inside "config"), a name given twice is its last value, \" inside a value is kept. Sets
+# _axle_run_pkg (name -> command) and _axle_run_pkg_order (names, as found). One awk.
+_axle_run_pkg_scripts() {
+  typeset -gA _axle_run_pkg=()
+  typeset -ga _axle_run_pkg_order=()
+  [[ -f $1 && -r $1 ]] || return 1
+  local name body
+  command awk '
+    function str(   o, c, e) {                     # the string at s[i] ("), i after it
+      o = ""; i++
+      while (i <= n) {
+        c = substr(s, i, 1)
+        if (c == "\\") {
+          e = substr(s, i + 1, 1)
+          if (e == "\"" || e == "\\" || e == "/") o = o e; else o = o "\\" e
+          i += 2; continue
+        }
+        if (c == "\"") { i++; return o }
+        if (c == "\t" || c == "\n" || c == "\r") c = " "
+        o = o c; i++
+      }
+      return o
+    }
+    { s = s $0 "\n" }
+    END {
+      n = length(s); i = 1; depth = 0; k1 = ""; k2 = ""
+      while (i <= n) {
+        c = substr(s, i, 1)
+        if (c == "\"") {
+          v = str(); j = i
+          while (j <= n && substr(s, j, 1) ~ /[ \t\r\n]/) j++
+          if (substr(s, j, 1) == ":") {            # a key
+            if (depth == 1) k1 = v
+            else if (depth == 2) k2 = v
+            i = j + 1
+          } else {                                 # a value
+            if (depth == 2 && k1 == "scripts" && k2 != "") print k2 "\t" v
+            k2 = ""
+          }
+          continue
+        }
+        if (c == "{" || c == "[") depth++
+        else if (c == "}" || c == "]") { depth--; k2 = "" }
+        else if (c == ",") k2 = ""
+        i++
+      }
+    }' $1 2>/dev/null |
+  while IFS=$'\t' read -r name body; do
+    (( ${+_axle_run_pkg[$name]} )) || _axle_run_pkg_order+=($name)
+    _axle_run_pkg[$name]=$body
+  done
+  (( ${#_axle_run_pkg_order} ))
+}
+
+# What `npm run <name>` runs, around it too (REPLY: "prename: ... | name: ... | postname:
+# ..."): the text shown and approved.
+_axle_run_pkg_text() {
+  local n=$1 x
+  REPLY=''
+  for x in pre$n $n post$n; do
+    (( ${+_axle_run_pkg[$x]} )) && REPLY+="${REPLY:+ | }${${x:#$n}:+$x: }${_axle_run_pkg[$x]}"
+  done
+}
+
 # A port written in code or config (REPLY): host:port in a string, or port=/port: N.
 _axle_run_code_port() {
   setopt localoptions extendedglob
@@ -52,8 +117,10 @@ _axle_run_python() {
   fi
 }
 
+# (what and why are shown: a control character in them is shown as ^[, never sent to the
+# terminal, where it could hide what runs)
 _axle_run_set() {
-  _axle_run_kind=$1 _axle_run_port=$2 _axle_run_what=$3 _axle_run_reason=$4
+  _axle_run_kind=$1 _axle_run_port=$2 _axle_run_what=${(V)3} _axle_run_reason=${(V)4}
 }
 
 _axle_run_detect() {
@@ -64,7 +131,7 @@ _axle_run_detect() {
   typeset -gi _axle_run_self=0 _axle_run_worker=0
   typeset -ga _axle_run_needs_set=() _axle_run_procs=()
   local _axle_run_proc_cur=$_axle_run_proc           # (a Procfile process: _axle_run_part_dir)
-  typeset -g _axle_run_proc=''
+  typeset -g _axle_run_proc='' _axle_run_proc_now=$_axle_run_proc_cur
   _axle_run_yours_files $1                         # which .env files (yours.zsh)
   _axle_run_detect_any $1 && _axle_run_detect_port $1
   _axle_run_yours_apply $1                         # your settings over it
@@ -82,7 +149,7 @@ _axle_run_detect_any() {
   _axle_run_detect_make $root     && return 0
   if [[ -f $root/index.html ]]; then
     _axle_run_python $root
-    _axle_run_cmd=($REPLY -m http.server 8000)
+    _axle_run_cmd=($REPLY -I -m http.server 8000)   # (-I: not the folder's own http/server.py)
     _axle_run_set service 8000 'static site' 'index.html'
     return 0
   fi
@@ -189,6 +256,7 @@ _axle_run_detect_procfile() {
     elif [[ $cmd == *rails\ (s|server)* ]]; then port=3000
     fi
     _axle_run_set service $port $file "$file web: $cmd"
+    [[ $cmd == *'$PORT'* || $cmd == *'${PORT'* ]] && _axle_run_portway=env:PORT   # (foreman's way)
   else
     _axle_run_worker=1
     _axle_run_set service '' $file "$file $proc: $cmd"
@@ -207,7 +275,7 @@ _axle_run_detect_make() {
     done
     for t in run dev serve start; do
       (( ${targets[(Ie)$t]} )) || continue
-      _axle_run_cmd=(just $t); _axle_run_source=$t
+      _axle_run_cmd=(just $t); _axle_run_source=$REPLY   # (the whole justfile: a recipe can call others)
       _axle_run_set task '' just "justfile recipe $t"
       return 0
     done
@@ -219,7 +287,7 @@ _axle_run_detect_make() {
   done
   for t in run dev serve start; do
     (( ${targets[(Ie)$t]} )) || continue
-    _axle_run_cmd=(make $t); _axle_run_source=$t
+    _axle_run_cmd=(make $t); _axle_run_source=$REPLY   # (the whole Makefile)
     _axle_run_set task '' make "Makefile target $t"
     return 0
   done
@@ -236,11 +304,12 @@ _axle_run_detect_node() {
   elif [[ -f $root/yarn.lock ]]; then pm=yarn
   elif [[ -f $root/bun.lockb || -f $root/bun.lock ]]; then pm=bun
   fi
-  local scripts='' name='' body=''
-  [[ $pkg =~ '"scripts"[[:space:]]*:[[:space:]]*\{([^}]*)\}' ]] && scripts=$match[1]
-  for name in dev start; do
-    [[ $scripts =~ "\"$name\"[[:space:]]*:[[:space:]]*\"([^\"]*)\"" ]] && { body=$match[1]; break }
-  done
+  local name='' body=''
+  if _axle_run_pkg_scripts $root/package.json; then
+    for name in dev start; do
+      (( ${+_axle_run_pkg[$name]} )) && { body=$_axle_run_pkg[$name]; break }
+    done
+  fi
   local fw='' port=''
   if [[ -n $body ]]; then
     case $body in                                  # first match wins: specific ones first
@@ -262,11 +331,12 @@ _axle_run_detect_node() {
     fi
     [[ $body == (#b)*(--port|-p)[=\ ]([0-9](#c2,5))* ]] && port=$match[2]
     _axle_run_cmd=($pm run $name)
-    _axle_run_source=$body
+    _axle_run_pkg_text $name                       # (with its pre / post scripts: npm runs those)
+    _axle_run_source=$REPLY
     if [[ -n $fw ]]; then
-      _axle_run_set service $port "node · $fw ($pm)" "package.json script $name: $body"
+      _axle_run_set service $port "node · $fw ($pm)" "package.json script $REPLY"
     else
-      _axle_run_set task '' "node ($pm)" "package.json script $name: $body"
+      _axle_run_set task '' "node ($pm)" "package.json script $REPLY"
     fi
     return 0
   fi

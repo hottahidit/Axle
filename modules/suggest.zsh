@@ -58,6 +58,7 @@ _axle_sg_load() {
   for line in "${(@f)$(command tail -n $AXLE_SUGGEST_LOAD $_axle_sg_file 2>/dev/null)}"; do
     f=("${(@ps:\t:)line}")
     (( ${#f} == 6 )) || continue
+    [[ $f[1] == <-> && $f[2] == <-> ]] || continue   # (the epoch goes into -gt: arithmetic)
     _axle_sg_learn $f[1] $f[2] $f[4] "${f[5]//\\n/$'\n'}" "${f[6]//\\n/$'\n'}"
   done
 }

@@ -27,20 +27,13 @@ _axle_run_tasks_find() {
     _axle_run_task_order+=($n)
   }
   # package.json scripts.
-  if _axle_run_read $dir/package.json; then
-    local pkg=$REPLY scripts=''
+  if _axle_run_pkg_scripts $dir/package.json; then
     _axle_run_diag_pm $dir; pm=$REPLY              # (its package manager, from the lockfile)
-    [[ $pkg =~ '"scripts"[[:space:]]*:[[:space:]]*\{([^}]*)\}' ]] && scripts=$match[1]
-    local -A body_of=()
-    local -a names=()
-    while [[ $scripts =~ '"([^"]+)"[[:space:]]*:[[:space:]]*"((\\.|[^"\\])*)"' ]]; do
-      names+=($match[1]); body_of[$match[1]]=$match[2]
-      scripts=${scripts[MEND+1,-1]}
-    done
-    for name in $names; do
+    for name in $_axle_run_pkg_order; do
       # (prestart, postbuild: npm runs those around start and build itself)
-      [[ $name == (pre|post)* ]] && (( ${+body_of[${name#(pre|post)}]} )) && continue
-      _axle_run_task_add $name "package.json ($pm)" "$body_of[$name]" $pm run $name
+      [[ $name == (pre|post)* ]] && (( ${+_axle_run_pkg[${name#(pre|post)}]} )) && continue
+      _axle_run_pkg_text $name
+      _axle_run_task_add $name "package.json ($pm)" "$REPLY" $pm run $name
     done
   fi
   # A justfile's recipes.

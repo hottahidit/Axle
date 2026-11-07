@@ -14,9 +14,11 @@ _axle_jump_load() {
   _axle_jump_mtime=$st[1]
   _axle_jump_count=() _axle_jump_last=()
   local dir n last
-  command awk -F'\t' 'NF == 6 { n[$4]++; if ($1 > l[$4]) l[$4] = $1 }
+  # (only well-formed records: the numbers are used in arithmetic, which would run code)
+  command awk -F'\t' 'NF == 6 && $1 ~ /^[0-9]+$/ { n[$4]++; if ($1 > l[$4]) l[$4] = $1 }
                       END { for (d in n) print n[d] "\t" l[d] "\t" d }' $_axle_hist_file |
   while IFS=$'\t' read -r n last dir; do
+    [[ $n == <-> && $last == <-> ]] || continue
     _axle_jump_count[$dir]=$n _axle_jump_last[$dir]=$last
   done
 }

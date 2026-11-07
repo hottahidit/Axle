@@ -11,6 +11,7 @@ _axle_cmd_history() {
   for line in "${(@f)$(command tail -n $n $_axle_hist_file)}"; do
     f=("${(@ps:\t:)line}")
     (( ${#f} == 6 )) || continue
+    [[ $f[1] == <-> && $f[2] == <-> && $f[3] == <->[.,]<-> ]] || continue   # (numbers: used in arithmetic)
     strftime -s when '%a %H:%M' $f[1]
     local mark="%F{${_axle_c[ok]:-green}}✓%f   "
     (( f[2] )) && mark="%F{${_axle_c[error]:-red}}✗${(r:3:)f[2]}%f"

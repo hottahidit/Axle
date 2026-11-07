@@ -31,7 +31,7 @@ _axle_sr_load() {
   local last ex dir here cmd
   if [[ -r $_axle_hist_file ]]; then
     command awk -F'\t' -v pwd="$PWD" '
-      NF == 6 { at[$6] = NR; t[$6] = $1; x[$6] = $2; d[$6] = $4; if ($4 == pwd) h[$6] = 1 }
+      NF == 6 && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ { at[$6] = NR; t[$6] = $1; x[$6] = $2; d[$6] = $4; if ($4 == pwd) h[$6] = 1 }
       END { for (c in at) byline[at[c]] = c
             for (i = NR; i > 0; i--) if (i in byline) { c = byline[i]
               print t[c] "\t" x[c] "\t" d[c] "\t" (c in h) "\t" c } }' $_axle_hist_file |
