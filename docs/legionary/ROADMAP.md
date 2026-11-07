@@ -241,6 +241,19 @@ Each milestone ends with its tests passing (Linux + macOS CI) and is usable on i
 - **Done when:** each has its test (logs, restarts, tasks, needs, health, notify, env,
   groups); the suite green on Linux and macOS.
 
+### M9 · Streamlining (v0.9.1)
+- Use outside an interactive zsh: `bin/axle` (bash, fish, Makefiles, git hooks, CI, editor
+  tasks); without a terminal nothing is asked, and an unapproved command doesn't run.
+- `axle run ls --json`; exit status documented (0 done, 1 not done, the program's own).
+- `-q` / `AXLE_RUN_QUIET`; no colours into a pipe; `NO_COLOR`.
+- `axle run logs all [-f] [-n N]`: every log, each line after its service's name.
+- Procfile: every process a part (workers up after 2 s), `Procfile.dev` first.
+- Fixed: without a terminal, `needs` started compose services unasked.
+- Later, to decide: a checked-in project file (`.axle-run`, trusted like the command) and
+  `axle run set --export`; mise tasks; monorepo workspaces as parts.
+- **Done when:** each has its test (wrapper, json, quiet / no colour, logs all, Procfile
+  processes, needs without a terminal); the suite green on Linux and macOS.
+
 ### Merge (→ `main`)
 - Remove the branch note at the top of the README.
 - README section, CHANGELOG, help pages, Tab completion for every subcommand.
@@ -259,10 +272,10 @@ axle run [words | path]        run this project, the one named, or the last one
 axle run --dry-run             say what would run, and why
 axle run --fg / --bg           force foreground / background
 axle run --profile <name>      use .env.<name>
-axle run ls                    running services: port, uptime, memory, URL
+axle run ls [--json]           running services: port, uptime, memory, URL
 axle run stop [name | all]     stop one (default: this project's) or all
 axle run restart [name]
-axle run logs [-f] [name]
+axle run logs [name | all] [-f] [-n N]
 axle run open [name]           open its URL in the browser
 axle run set <key> <value>     this project's override: command, port, kind, env-file
 axle run forget                drop this project's override and trust

@@ -5,15 +5,17 @@
 # Loaded when first needed.
 
 # Runnable parts of a project (reply): "." for the root itself, else folders relative to
-# it (one level down, and inside apps/, packages/, services/, crates/). Detection results
-# of the last part checked are left behind; detect a part again before using it.
+# it (one level down, and inside apps/, packages/, services/, crates/), and a Procfile's
+# other processes as <folder>:<process> (.:worker). Detection results of the last part
+# checked are left behind; detect a part again before using it.
 _axle_run_parts() {
   setopt localoptions extendedglob
-  local root=$1 dir
+  local root=$1 dir proc
   local -a found=() cands
   if _axle_run_detect $root; then
     found=(.)
     [[ $_axle_run_kind == compose ]] && { reply=($found); return 0 }   # compose runs it all
+    [[ $_axle_run_what == Procfile* ]] && for proc in $_axle_run_procs; do found+=(.:$proc); done
   fi
   cands=($root/^(.*|node_modules|venv|env|dist|build|target|vendor|docs|doc|tests|test|examples|__pycache__|public|static|assets|src|lib|apps|packages|services|crates)(N/)
          $root/(apps|packages|services|crates)/^.*(N/))
@@ -22,19 +24,33 @@ _axle_run_parts() {
     [[ -e $dir/pyvenv.cfg ]] && continue           # a venv
     # A Python package of the project, with no project file of its own, isn't a part.
     [[ -e $dir/__init__.py && -z $dir/(pyproject.toml|requirements.txt|setup.py|Pipfile|package.json|manage.py)(#qN[1]) ]] && continue
-    _axle_run_detect $dir && found+=(${dir#$root/})
+    if _axle_run_detect $dir; then
+      found+=(${dir#$root/})
+      [[ $_axle_run_what == Procfile* ]] && for proc in $_axle_run_procs; do found+=(${dir#$root/}:$proc); done
+    fi
   done
   reply=($found)
   (( ${#reply} ))
 }
 
-# A part's service name (REPLY): the project's folder name, then the part's.
+# A part's service name (REPLY): the project's folder name, then the part's (and its
+# Procfile process: shop-worker, shop-api-worker).
 _axle_run_partname() {
-  local root=$1 part=$2
+  local root=$1 part=${2%%:*} proc=${2#*:}
+  [[ $2 == *:* ]] || proc=''
   if [[ $part == . ]]; then REPLY=${root:t}
   else REPLY=${root:t}-${part:t}
   fi
-  REPLY=${REPLY//[^A-Za-z0-9._-]/-}
+  REPLY=${REPLY//[^A-Za-z0-9._-]/-}${proc:+-${proc//[^A-Za-z0-9._-]/-}}
+}
+
+# A part's folder (REPLY), and its Procfile process for the next detection
+# (_axle_run_proc: `_axle_run_detect` takes it and clears it).
+_axle_run_part_dir() {
+  local root=$1 part=${2%%:*}
+  typeset -g _axle_run_proc=''
+  [[ $2 == *:* ]] && _axle_run_proc=${2#*:}
+  REPLY=$root${${part:#.}:+/$part}
 }
 
 # --- the saved choice -------------------------------------------------------------------
@@ -76,7 +92,8 @@ _axle_run_choose() {
   on=(${saved:*parts}); (( ${#on} )) || on=($parts)
   local p REPLY
   for p in $parts; do
-    _axle_run_detect $root/${p:#.}
+    _axle_run_part_dir $root $p
+    _axle_run_detect $REPLY
     _axle_run_partname $root $p
     local label="$REPLY  (${${p:#.}:-the root}) · $_axle_run_what"
     [[ $_axle_run_kind == service && -n $_axle_run_port ]] && label+=" :$_axle_run_port"

@@ -85,11 +85,16 @@ _axle_run_needs() {
   local key="$compose"$'\t'"needs:$REPLY"
   if ! _axle_run_trusted $key; then
     if (( ! yes )) && [[ $AXLE_RUN_TRUST != always ]]; then
+      # (no terminal to ask in: not started, and said; never yes by default)
+      if ! _axle_ui_tty; then
+        _axle_printp "%F{$warn}!%f ${name//\%/%%} needs ${(j:, :)start} (${compose:t}): not started without asking (run it once in a terminal, or with --yes)"
+        return 0
+      fi
       axle_confirm "Start ${(j:, :)start} first?  docker compose up -d ${(j: :)start} (${compose:t})" y || return 0
     fi
     _axle_run_trust $key
   fi
-  _axle_printp "%F{$muted}▶ docker compose up -d ${(j: :)start}  (what ${name//\%/%%} needs${said:+: ${(j:, :)said}})%f"
+  _axle_run_quiet || _axle_printp "%F{$muted}▶ docker compose up -d ${(j: :)start}  (what ${name//\%/%%} needs${said:+: ${(j:, :)said}})%f"
   ( cd -- ${compose:h} && command docker compose -f ${compose:t} up -d $start ) 2>&1 | sed 's/^/  /'
   # Then its port, up to 30 s.
   local -i i

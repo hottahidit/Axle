@@ -1,0 +1,23 @@
+#!/bin/sh
+# axle outside an interactive zsh: scripts, Makefiles, git hooks, CI, editor tasks, and
+# other shells (bash, fish). Put this folder on PATH, or link the file into one:
+#
+#   ln -s /path/to/axle/bin/axle ~/.local/bin/axle
+#
+#   axle run ls --json | jq '.[].url'
+#   axle run :test || exit 1
+#
+# It starts a plain zsh (no ~/.zshrc), loads Axle with your settings
+# (~/.config/axle/config.zsh) plus the run module, and runs the command. Your prompt and
+# your interactive shell are untouched: inside zsh, `axle` is still the shell function.
+# Without a terminal nothing is asked: a project's command that hasn't been approved yet
+# doesn't run (pass --yes, or approve it once in a terminal).
+command -v zsh >/dev/null 2>&1 || { echo "axle: needs zsh (5.8 or newer)" >&2; exit 127; }
+exec zsh -f -c '
+  self=${1:A}; shift
+  root=${self:h:h}
+  [[ -r $root/axle.plugin.zsh ]] || { print -u2 -r -- "axle: can'"'"'t find Axle next to $self"; exit 127 }
+  source "$root/axle.plugin.zsh" || exit 1
+  (( ${AXLE_MODULES[(Ie)run]} )) || source "$root/modules/run.zsh"
+  axle "$@"
+' axle "$0" "$@"

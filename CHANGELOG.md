@@ -20,10 +20,15 @@ Fixed for everyone:
   defines it); now it does, and the venv stays off until you leave the project. After
   `exec zsh` (or in a nested shell), its venv counted as one you'd activated by hand, so it
   was never switched off again.
+- `axle run`: without a terminal (a script, an editor), a database a service needs was
+  started from the project's compose file without asking (the question's default was yes);
+  now it isn't, and it says how to allow it.
 - `highlight`: typing a word with a `]` in it (`]` alone, `a]b`) printed
   `_axle_hl_runnable:14: invalid subscript` over the line.
 
 Also for everyone:
+- Output into a pipe or a file has no colours, and `NO_COLOR` (no-color.org) turns them off
+  everywhere (`FORCE_COLOR` keeps them in a pipe).
 - Benzene: the timer behind the clock and drops is kept from one prompt to the next when it
   rings at the same time (now on whole multiples of the drop interval too). Before, each
   prompt started a new `sleep` process, and the old ones lingered until their time: twenty
@@ -183,6 +188,22 @@ New:
     install it; answering no to "Run <last project>?" leaves you where you were and lists the
     other projects you worked in lately, to run one of them instead (Esc: none), and
     from a folder with nothing to run it says so before offering that project.
+  - For scripts, editors and other shells: `bin/axle` runs any `axle` command from bash,
+    fish, a Makefile, a git hook, CI or an editor task (put it on PATH, or link it into
+    one); it loads Axle with your settings, without ~/.zshrc. Without a terminal nothing
+    is asked: a command not approved yet doesn't run, and says so (`--yes` approves it).
+    `axle run ls --json` gives the services as JSON (name, state, exit code, port, URL,
+    pid, uptime, memory, restarts, kind, folder, log). Exit status: 0 done, 1 not done,
+    and in the foreground the program's own. `AXLE_RUN_ON_EXIT=stop` only applies to an
+    interactive shell (a script's services would end with it at once).
+  - `axle run -q` (or `AXLE_RUN_QUIET=1`): no ▶ lines or hints, just what happened.
+  - `axle run logs all [-f]`: every service's log at once, each line after its name (in its
+    own colour in a terminal), like `docker compose logs`; `-n 200` for more lines than 50,
+    and options go before or after the name.
+  - A Procfile's other processes (`worker:`, `css:`, ...) are parts of the project, each a
+    service of its own (`shop-worker`), up once it has run 2 s; `release:` isn't run.
+    `Procfile.dev` (Rails' `bin/dev`, overmind) is read before `Procfile`, and the web
+    process's port comes from its command (`-p 3000`, `--port`, `rails server`).
 - Shared helpers, so each works without the other part: project markers and venv finding
   (`lib/project.zsh`, used by Benzene, `env` and `run`), and `j`'s folder ranking
   (`lib/rank.zsh`, used by `j` and `run`). Both load on first use.

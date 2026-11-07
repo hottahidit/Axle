@@ -288,7 +288,7 @@ _axle_run_start() {
   (( ${#_axle_run_envfiles} )) && print -rn -- "${(pj:\0:)_axle_run_envfiles}" >| $dir/envfiles
   # AXLE_RUN_ON_EXIT=stop: it ends with this shell (the supervisor watches it).
   local owner=''
-  if [[ $AXLE_RUN_ON_EXIT == stop ]]; then
+  if [[ $AXLE_RUN_ON_EXIT == stop && -o interactive ]]; then   # (not a script's: it ends now)
     _axle_run_pstart $$ && owner="$$:$REPLY"
   fi
   # AXLE_RUN_OPEN=1: the browser opens once it answers (not on a restart).
@@ -299,9 +299,10 @@ _axle_run_start() {
   local zsh_bin=${commands[zsh]:-zsh}
   [[ -x /proc/$$/exe ]] && zsh_bin=/proc/$$/exe      # (the very zsh running now)
   _axle_run_put $dir venv "$_axle_run_use_venv"
+  (( ${_axle_run_worker:-0} )) && _axle_run_put $dir worker 1
   AXLE_RUN_USE_VENV=$_axle_run_use_venv AXLE_RUN_OWNER=$owner AXLE_RUN_OPEN_URL=$open \
   AXLE_RUN_ONFAIL=$onfail AXLE_RUN_LOG_MAX=${AXLE_RUN_LOG_MAX:-10M} AXLE_RUN_NOTIFY=${AXLE_RUN_NOTIFY:-off} \
-  AXLE_RUN_HEALTH=$_axle_run_health \
+  AXLE_RUN_HEALTH=$_axle_run_health AXLE_RUN_WORKER=${_axle_run_worker:-0} \
   $zsh_bin -f -c 'source "$1/lib/project.zsh" && source "$1/modules/run/service.zsh" &&
                   source "$1/modules/run/supervise.zsh" &&
                   shift && _axle_run_supervise "$@"' axle-run \
@@ -347,10 +348,11 @@ _axle_run_mine() {
 _axle_run_bg() {
   local root=$1 name=$2 REPLY
   local muted=${_axle_c[muted]:-244} ok=${_axle_c[ok]:-green} err=${_axle_c[error]:-red}
-  local dir=$_axle_run_dir/services/$name
+  local dir=$_axle_run_dir/services/$name q=0
+  _axle_run_quiet && q=1                           # (no hints)
   if _axle_run_alive $dir; then
     _axle_run_get $dir url
-    _axle_printp "%F{$ok}⚡%f %B${name//\%/%%}%b is already running${REPLY:+ on ${REPLY//\%/%%}} %F{$muted}(axle run restart · logs · open)%f"
+    _axle_printp "%F{$ok}⚡%f %B${name//\%/%%}%b is already running${REPLY:+ on ${REPLY//\%/%%}}${${q:#1}:+ %F{$muted\}(axle run restart · logs · open)%f}"
     return 0
   fi
   _axle_run_start $root $name || return 1
@@ -368,7 +370,7 @@ _axle_run_bg() {
   case $state in
     up)
       _axle_run_get $dir url
-      _axle_printp "%F{$ok}⚡%f %B${name//\%/%%}%b running on ${REPLY//\%/%%}  %F{$muted}(background · axle run logs · stop)%f" ;;
+      _axle_printp "%F{$ok}⚡%f %B${name//\%/%%}%b running${REPLY:+ on ${REPLY//\%/%%}}${${q:#1}:+  %F{$muted\}(background · axle run logs · stop)%f}" ;;
     restarting)
       _axle_run_get $dir code
       _axle_printp "%F{${_axle_c[warn]:-yellow}}↻%f %B${name//\%/%%}%b exited (code $REPLY), and starts again by itself (restart on-crash). Its log:"
@@ -386,46 +388,95 @@ _axle_run_bg() {
       if [[ ! -d $dir ]]; then
         _axle_printp "%F{$muted}${name//\%/%%} finished.%f"
       else
-        _axle_printp "%F{$muted}⏳%f %B${name//\%/%%}%b is starting in the background %F{$muted}(it shows in the prompt when ready · axle run logs)%f"
+        _axle_printp "%F{$muted}⏳%f %B${name//\%/%%}%b is starting in the background${${q:#1}:+ %F{$muted\}(it shows in the prompt when ready · axle run logs)%f}"
       fi ;;
   esac
   return 0
 }
 
+# A JSON string of $1 (REPLY), quotes included.
+_axle_run_json_str() {
+  setopt localoptions extendedglob
+  local s=${1//\\/\\\\}
+  s=${s//\"/\\\"}; s=${s//$'\n'/\\n}; s=${s//$'\t'/\\t}; s=${s//$'\r'/\\r}
+  s=${s//[$'\x01'-$'\x1f']/}                       # (other control characters: dropped)
+  REPLY="\"$s\""
+}
+
+# axle run ls [--json]: the services, a table (colours in a terminal, plain in a pipe), or
+# with --json an array of objects for scripts and editors:
+#   name state code port url pid uptime memory_kb restarts kind root log
+# (state: starting, up, restarting, unhealthy, crashed, or compose; numbers or null).
 _axle_run_ls() {
+  local -i json=0
+  case $1 in
+    --json) json=1 ;;
+    '') ;;
+    *) print -u2 -r -- "axle run ls: $1? (axle run ls [--json])"; return 1 ;;
+  esac
   local -a reply
   _axle_run_services
   local -a names=($reply)
-  if (( ! ${#names} )); then print -r -- "nothing running"; return 0; fi
+  if (( ! ${#names} )); then
+    if (( json )); then print -r -- '[]'; else print -r -- "nothing running"; fi
+    return 0
+  fi
   # Memory: each service with its child processes, from one `ps`.
   local -A rss kids
-  local l pid ppid r
+  local l
   for l in ${(f)"$(command ps -A -o pid= -o ppid= -o rss= 2>/dev/null)"}; do
     local -a f=(${=l})
     rss[$f[1]]=$f[3]; kids[$f[2]]+=" $f[1]"
   done
   local muted=${_axle_c[muted]:-244}
-  _axle_printp "%F{$muted}${(r:18:):-NAME}${(r:10:):-STATE}${(r:7:):-PORT}${(r:9:):-UPTIME}${(r:9:):-MEMORY}URL%f"
-  local name dir state port up mem url REPLY
+  (( json )) ||
+    _axle_printp "%F{$muted}${(r:18:):-NAME}${(r:10:):-STATE}${(r:7:):-PORT}${(r:9:):-UPTIME}${(r:9:):-MEMORY}URL%f"
+  local name dir state port up mem url REPLY kind code pid started restarts root
+  local -a objs=()
+  local -i kb secs
   for name in $names; do
     dir=$_axle_run_dir/services/$name
     _axle_run_get $dir state; state=$REPLY
-    _axle_run_get $dir port;  port=${REPLY:--}
+    _axle_run_get $dir port;  port=$REPLY
     _axle_run_get $dir url;   url=$REPLY
-    _axle_run_get $dir started
-    _axle_fmt_duration $(( EPOCHSECONDS - ${REPLY:-$EPOCHSECONDS} )); up=${REPLY/.??s/s}
-    mem=-
-    _axle_run_get $dir kind
-    if [[ $REPLY == compose ]]; then
+    _axle_run_get $dir kind;  kind=${REPLY:-service}
+    _axle_run_get $dir code;  code=$REPLY
+    _axle_run_get $dir root;  root=$REPLY
+    _axle_run_get $dir restarts; restarts=${REPLY:-0}
+    _axle_run_get $dir started; started=$REPLY
+    secs=$(( EPOCHSECONDS - ${started:-$EPOCHSECONDS} ))
+    pid='' kb=0
+    if [[ $kind == compose ]]; then
       state=compose
     elif [[ $state == crashed ]]; then
-      _axle_run_get $dir code; state="exit $REPLY"; up=- port=- url=''   # (nothing listens)
+      port='' url='' secs=0                         # (nothing listens)
     elif _axle_run_get $dir pid; then
-      local -a tree=($REPLY); local -i i=1 kb=0
+      pid=$REPLY
+      local -a tree=($pid); local -i i=1
       while (( i <= ${#tree} )); do tree+=(${=kids[$tree[i]]}); (( kb += ${rss[$tree[i]]:-0} )); (( i++ )); done
-      (( kb )) && mem="$(( kb / 1024 ))M"
     fi
-    local row="${(r:18:)name}${(r:10:)state}${(r:7:)port}${(r:9:)up}${(r:9:)mem}"
+    if (( json )); then
+      local o=''
+      _axle_run_json_str $name;  o+="{\"name\":$REPLY"
+      _axle_run_json_str ${state:-starting}; o+=",\"state\":$REPLY"
+      o+=",\"code\":${${state:#crashed}:+null}${${(M)state:#crashed}:+${code:-null}}"
+      o+=",\"port\":${port:-null}"
+      if [[ -n $url ]]; then _axle_run_json_str $url; o+=",\"url\":$REPLY"; else o+=",\"url\":null"; fi
+      o+=",\"pid\":${pid:-null}"
+      o+=",\"uptime\":${${${(M)state:#crashed}:+null}:-$secs}"
+      o+=",\"memory_kb\":${${kb:#0}:-null}"
+      o+=",\"restarts\":$restarts"
+      _axle_run_json_str $kind;  o+=",\"kind\":$REPLY"
+      _axle_run_json_str $root;  o+=",\"root\":$REPLY"
+      _axle_run_json_str $dir/log; o+=",\"log\":$REPLY}"
+      objs+=($o)
+      continue
+    fi
+    _axle_fmt_duration $secs; up=${REPLY/.??s/s}
+    mem=-
+    (( kb )) && mem="$(( kb / 1024 ))M"
+    [[ $state == crashed ]] && { state="exit $code"; up=- }
+    local row="${(r:18:)name}${(r:10:)state}${(r:7:)${port:--}}${(r:9:)up}${(r:9:)mem}"
     if [[ -t 1 ]]; then                            # (colours for you, plain for a pipe)
       local c=${_axle_c[muted]:-244}
       case $state in
@@ -438,6 +489,8 @@ _axle_run_ls() {
       print -r -- "$row$url"
     fi
   done
+  (( json )) && print -r -- "[${(j:,:)objs}]"
+  return 0
 }
 
 # Run `docker compose -f <file> <args>` for a compose service, in its folder.
@@ -512,6 +565,7 @@ _axle_run_restart() {
   _axle_run_get $dir kind; kind=$REPLY
   _axle_run_get $dir onfail; local _axle_run_onfail=$REPLY
   _axle_run_get $dir health; local _axle_run_health=$REPLY
+  _axle_run_get $dir worker; local -i _axle_run_worker=${REPLY:-0}
   [[ -r $dir/cmd ]] || { print -u2 "axle run: don't know how $name was started"; return 1 }
   local -a reply words extra=()
   _axle_run_words $dir/cmd; words=($reply)
@@ -526,10 +580,61 @@ _axle_run_restart() {
   _axle_run_bg $root $name
 }
 
+# axle run logs all [-f] [-n N]: every service's log, each line after its name (like
+# docker compose logs), in one `tail` (in a terminal, each name in its own colour).
+_axle_run_logs_all() {
+  local follow=$1 lines=$2 REPLY s
+  local -a reply files=() names=() skipped=()
+  _axle_run_services
+  for s in $reply; do
+    if _axle_run_get $_axle_run_dir/services/$s kind && [[ $REPLY == compose ]]; then
+      skipped+=($s)
+    elif [[ -r $_axle_run_dir/services/$s/log ]]; then
+      files+=($_axle_run_dir/services/$s/log) names+=($s)
+    fi
+  done
+  (( ${#skipped} )) &&
+    print -u2 -r -- "(not here: ${(j:, :)skipped}: docker compose's own, axle run logs <name>)"
+  (( ${#files} )) || { print -r -- "no logs (nothing running)"; return 0 }
+  local -i width=0 colour=0
+  for s in $names; do (( ${#s} > width )) && width=${#s}; done
+  [[ -t 1 && -z $NO_COLOR ]] && colour=1
+  local -a opts=(-n $lines)
+  (( follow )) && opts+=(-F)
+  # tail marks each file's lines with "==> <file> <==" (after a blank line): those become
+  # the name in front of each line.
+  command tail $opts -- $files 2>/dev/null | command awk -v w=$width -v c=$colour -v one=$names[1] \
+    -v all="${(j: :)names}" '
+    BEGIN { n = split(all, a, " "); for (i = 1; i <= n; i++) col[a[i]] = 31 + i % 6; cur = one }
+    /^==> .* <==$/ { p = $0; sub(/^==> /, "", p); sub(/\/log <==$/, "", p); k = split(p, b, "/"); cur = b[k]; blank = 0; next }
+    /^$/ { blank++; next }
+    {
+      tag = sprintf("%-" w "s │", cur)
+      if (c) tag = "\033[" col[cur] "m" tag "\033[0m"
+      for (; blank > 0; blank--) print tag
+      print tag " " $0; fflush()
+    }'
+  return 0
+}
+
 _axle_run_logs() {
-  local follow=0 REPLY
-  [[ $1 == -f ]] && { follow=1; shift }
-  _axle_run_which $1 || return 1
+  local follow=0 lines=50 REPLY
+  local -a which=()
+  while (( $# )); do                               # (options before or after the name)
+    case $1 in
+      -f|--follow) follow=1 ;;
+      -n) [[ $2 == <-> ]] || { print -u2 -r -- "axle run logs: -n needs a number"; return 1 }
+          lines=$2; shift ;;
+      -n<->) lines=${1#-n} ;;
+      --lines=<->) lines=${1#*=} ;;
+      -*) print -u2 -r -- "axle run logs: $1? (axle run logs [name|all] [-f] [-n lines])"; return 1 ;;
+      *)  which+=($1) ;;
+    esac
+    shift
+  done
+  (( ${#which} > 1 )) && { print -u2 -r -- "axle run logs: one name, or all"; return 1 }
+  [[ $which[1] == all ]] && { _axle_run_logs_all $follow $lines; return }
+  _axle_run_which $which[1] || return 1
   local name=$REPLY dir=$_axle_run_dir/services/$REPLY
   if _axle_run_get $dir kind && [[ $REPLY == compose ]]; then
     if (( follow )); then _axle_run_compose $dir logs --tail 200 -f
@@ -542,11 +647,11 @@ _axle_run_logs() {
   local crashed=$REPLY
   [[ $crashed == crashed ]] && command rm -f -- $_axle_run_drops/run-$name
   # (In a terminal, which log first; piped, just the log.)
-  [[ -t 1 ]] && _axle_printp "%F{${_axle_c[muted]:-244}}── ${name//\%/%%}: ${${dir/#$HOME/~}//\%/%%}/log, the last 50 lines${${follow:#0}:+, then as it grows (Ctrl-C stops)}%f"
+  [[ -t 1 ]] && ! _axle_run_quiet && _axle_printp "%F{${_axle_c[muted]:-244}}── ${name//\%/%%}: ${${dir/#$HOME/~}//\%/%%}/log, the last $lines lines${${follow:#0}:+, then as it grows (Ctrl-C stops)}%f"
   if (( follow )); then
-    command tail -n 50 -f -- $dir/log
+    command tail -n $lines -f -- $dir/log
   else
-    command tail -n 50 -- $dir/log
+    command tail -n $lines -- $dir/log
     if [[ $crashed == crashed && -t 1 ]]; then        # and why, if it's a known cause (not
                                                       # into a pipe: | head, | grep get the log)
       local root port

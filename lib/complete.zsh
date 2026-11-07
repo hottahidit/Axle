@@ -128,15 +128,17 @@ _axle_complete() {
         local -a profs=(.env.*(DN.))
         profs=(${profs#.env.} none)
         compadd -a profs
+      elif [[ $words[3] == ls ]]; then
+        compadd -- --json
       elif [[ $words[3] == (stop|restart|logs|open) ]]; then
-        [[ $words[3] == stop ]] && svcs+=(all)
-        [[ $words[3] == logs ]] && compadd -- -f
+        [[ $words[3] == (stop|logs) ]] && svcs+=(all)
+        [[ $words[3] == logs ]] && compadd -- -f -n
         compadd -a svcs
       elif [[ $PREFIX == -* ]]; then
         _values option '--dry-run[say what would run, and why]' '--yes[run without asking]' \
           '--fg[in the foreground]' '--bg[in the background]' '--config[choose the parts again]' \
           '--verbose[show these parts'"'"' output]' '--only[just the --verbose parts]' \
-          '--profile[use .env.<name> over .env, remembered]'
+          '--profile[use .env.<name> over .env, remembered]' '--quiet[no ▶ lines or hints]'
       elif (( $+functions[_axle_jump_complete] )); then
         shift words; (( CURRENT-- ))
         _axle_jump_complete

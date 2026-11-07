@@ -16,14 +16,15 @@
 
 _axle_lazy modules/run/main.zsh _axle_cmd_run _axle_run_pick _axle_run_last _axle_run_recent \
                                 _axle_run_state_init _axle_run_hash _axle_run_trust_key \
-                                _axle_run_trusted _axle_run_show _axle_run_choose_venv
+                                _axle_run_trusted _axle_run_show _axle_run_choose_venv _axle_run_quiet
 _axle_lazy modules/run/service.zsh _axle_run_get _axle_run_put _axle_run_drop _axle_run_start _axle_run_bg _axle_run_ls _axle_run_stop \
-                                   _axle_run_restart _axle_run_logs _axle_run_open _axle_run_name \
+                                   _axle_run_restart _axle_run_logs _axle_run_logs_all _axle_run_open _axle_run_name \
                                    _axle_run_alive _axle_run_envfile _axle_run_services _axle_run_stop_one _axle_run_mine \
-                                   _axle_run_port_up _axle_run_bounded _axle_run_enter_venv _axle_run_dotenv
+                                   _axle_run_port_up _axle_run_bounded _axle_run_enter_venv _axle_run_dotenv \
+                                   _axle_run_json_str
 _axle_lazy modules/run/ports.zsh _axle_run_port_holder _axle_run_port_service _axle_run_free_port \
                                  _axle_run_apply_port _axle_run_resolve_port
-_axle_lazy modules/run/parts.zsh _axle_run_parts _axle_run_partname _axle_run_choice_load \
+_axle_lazy modules/run/parts.zsh _axle_run_parts _axle_run_partname _axle_run_part_dir _axle_run_choice_load \
                                  _axle_run_choice_save _axle_run_choose _axle_run_tmux _axle_run_tmux_show \
                                  _axle_run_have_tmux
 _axle_lazy modules/run/yours.zsh _axle_run_set_cmd _axle_run_forget_project _axle_run_profile_use \

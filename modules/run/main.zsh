@@ -274,6 +274,10 @@ _axle_run_approve() {
   local key=$REPLY muted=${_axle_c[muted]:-244}
   # Your own command (axle run set command) needs no approval.
   if (( ! ${_axle_run_yours[(Ie)command]} )) && ! _axle_run_trusted $key; then
+    if (( ! yes )) && [[ $AXLE_RUN_TRUST != always ]] && ! _axle_ui_tty; then
+      print -u2 -r -- "axle run: $name's command hasn't been approved yet: run it once in a terminal, or pass --yes"
+      return 1
+    fi
     if (( ! yes )); then
       _axle_run_show $dir
       _axle_printp "%F{$muted}First run of this command in ${name//\%/%%} (${_axle_run_reason//\%/%%}).%f"
@@ -333,7 +337,11 @@ _axle_run_choose_venv() {
 }
 
 # The ▶ line: the command about to run (and what axle run adds to its environment).
+# Quiet (-q, AXLE_RUN_QUIET=1): no ▶ lines and hints, just what happened.
+_axle_run_quiet() { [[ -n $AXLE_RUN_QUIET && $AXLE_RUN_QUIET != 0 ]] }
+
 _axle_run_say_cmd() {
+  _axle_run_quiet && return 0
   local REPLY
   local -a shown=(${_axle_run_env:#PYTHONPATH=$AXLE_ROOT/modules/run/py*})   # (our hook)
   _axle_run_show $1
@@ -386,6 +394,7 @@ _axle_cmd_run() {
     case $1 in
       -n|--dry-run) dry=1 ;;
       -y|--yes)     yes=1 ;;
+      -q|--quiet)   local AXLE_RUN_QUIET=1 ;;
       --fg)         mode=fg ;;
       --bg)         mode=bg ;;
       --config)     config=1 ;;
@@ -563,7 +572,7 @@ _axle_run_verbose() {
 _axle_run_start_parts() {
   local REPLY p dir svc
   for p in $chosen; do
-    dir=$root${${p:#.}:+/$p}
+    _axle_run_part_dir $root $p; dir=$REPLY
     _axle_run_partname $root $p
     _axle_run_name $dir $REPLY; svc=$REPLY
     if ! _axle_run_detect $dir; then
@@ -612,7 +621,8 @@ _axle_run_start_parts() {
 # The part in this shell (fg), in the foreground: its hooks, and why if it failed. Its exit
 # code. Uses root, fg, yes.
 _axle_run_foreground() {
-  local REPLY dir=$root${${fg:#.}:+/$fg} svc
+  local REPLY dir svc
+  _axle_run_part_dir $root $fg; dir=$REPLY
   _axle_run_partname $root $fg; svc=$REPLY
   _axle_run_detect $dir || return 1
   _axle_run_ready $dir $svc $yes || return 1
@@ -660,7 +670,7 @@ _axle_run_dry() {
     fi
   fi
   for p in $parts; do
-    dir=$root${${p:#.}:+/$p}
+    _axle_run_part_dir $root $p; dir=$REPLY
     _axle_run_detect $dir || continue
     _axle_run_partname $root $p
     local svc=$REPLY ind='  '

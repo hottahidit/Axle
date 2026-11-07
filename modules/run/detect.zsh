@@ -61,8 +61,10 @@ _axle_run_detect() {
   typeset -g _axle_run_kind='' _axle_run_port='' _axle_run_what='' _axle_run_reason='' \
              _axle_run_source='' _axle_run_portway='' _axle_run_use_venv='' _axle_run_onfail='' \
              _axle_run_health=''
-  typeset -gi _axle_run_self=0
-  typeset -ga _axle_run_needs_set=()
+  typeset -gi _axle_run_self=0 _axle_run_worker=0
+  typeset -ga _axle_run_needs_set=() _axle_run_procs=()
+  local _axle_run_proc_cur=$_axle_run_proc           # (a Procfile process: _axle_run_part_dir)
+  typeset -g _axle_run_proc=''
   _axle_run_yours_files $1                         # which .env files (yours.zsh)
   _axle_run_detect_any $1 && _axle_run_detect_port $1
   _axle_run_yours_apply $1                         # your settings over it
@@ -155,19 +157,43 @@ _axle_run_detect_compose() {
   return 0
 }
 
-# A Procfile's web: line (a shell command line, so it runs through sh -c, like foreman).
+# A Procfile (Procfile.dev first: the local one, as Rails' bin/dev and overmind use): its
+# web: line runs as the project; its other processes (worker:, css:, ...) are parts of it
+# (_axle_run_procs), each a service of its own, up once it's been running 2 s. A line is a
+# shell command line, so it runs through sh -c, like foreman. release: (a deploy step)
+# isn't run.
 _axle_run_detect_procfile() {
   setopt localoptions extendedglob
-  local root=$1 REPLY line
-  _axle_run_read $root/Procfile || return 1
+  local root=$1 REPLY line file want=$_axle_run_proc_cur
+  local -A cmds=()
+  local -a order=()
+  for file in Procfile.dev Procfile; do _axle_run_read $root/$file && break; file=''; done
+  [[ -n $file ]] || return 1
   for line in ${(f)REPLY}; do
-    [[ $line == (#b)web:[[:space:]]#(*) && -n $match[1] ]] || continue
-    _axle_run_cmd=(sh -c $match[1])
-    _axle_run_source=$match[1]
-    _axle_run_set service 5000 'Procfile' "Procfile web: $match[1]"
-    return 0
+    [[ $line == (#b)([A-Za-z0-9_-]##):[[:space:]]#(*) && -n ${match[2]// } ]] || continue
+    [[ $match[1] == release ]] && continue
+    (( ${+cmds[$match[1]]} )) || order+=($match[1])
+    cmds[$match[1]]=${match[2]%%[[:space:]]#}
   done
-  return 1
+  (( ${+cmds[web]} )) || return 1                  # (no web: not how this project runs)
+  typeset -ga _axle_run_procs=(${order:#web})
+  local proc=${want:-web}
+  (( ${+cmds[$proc]} )) || return 1                # (a process that's gone)
+  local cmd=$cmds[$proc]
+  _axle_run_cmd=(sh -c $cmd)
+  _axle_run_source=$cmd
+  if [[ $proc == web ]]; then
+    local port=5000
+    if [[ $cmd == (#b)*(-p|--port|http.server)[=[:space:]]##([0-9](#c2,5))(|[^0-9]*) ]]; then port=$match[2]
+    elif [[ $cmd == (#b)*[[:space:]]([0-9](#c4,5)) ]]; then port=$match[1]   # (serve.py 8080)
+    elif [[ $cmd == *rails\ (s|server)* ]]; then port=3000
+    fi
+    _axle_run_set service $port $file "$file web: $cmd"
+  else
+    _axle_run_worker=1
+    _axle_run_set service '' $file "$file $proc: $cmd"
+  fi
+  return 0
 }
 
 # A Makefile or justfile target: run, dev, serve or start (in that order).

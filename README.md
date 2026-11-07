@@ -11,7 +11,8 @@
 > (`axle run set`, `--profile`), crash diagnosis (the fix on the line with Esc Esc), shared venvs
 > a live monitor (`axle top`: btop, with an Axle mode for the services), and upkeep (log
 > limits, restart on crash, project tasks `axle run :test`, databases started first, health
-> checks, notifications, `axle run env`, groups) are built and being tested. `axle run` isn't described in the rest of this README yet,
+> checks, notifications, `axle run env`, groups), and use from scripts and editors (`bin/axle`,
+> `axle run ls --json`) are built and being tested. `axle run` isn't described in the rest of this README yet,
 > and the plan is in [docs/legionary/ROADMAP.md](docs/legionary/ROADMAP.md).
 >
 > **To try it,** on this branch:
@@ -23,6 +24,8 @@
 > axle run ls           # what's running (also: stop, restart, logs, open)
 > axle run set port 8080   # your settings for this project (also: command, kind, env-file)
 > axle help run         # everything else
+>
+> bin/axle run ls --json   # from bash, a Makefile, CI or an editor (put bin/ on PATH)
 > ```
 >
 > The stable version is on [`main`](https://github.com/hottahidit/axle/tree/main). This branch is

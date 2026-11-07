@@ -35,8 +35,9 @@ _axle_run_supervise() {
   local REPLY e use=$AXLE_RUN_USE_VENV owner=$AXLE_RUN_OWNER open=$AXLE_RUN_OPEN_URL
   local onfail=$AXLE_RUN_ONFAIL logmax=$AXLE_RUN_LOG_MAX notify=$AXLE_RUN_NOTIFY health=$AXLE_RUN_HEALTH
   local -i unit=${_AXLE_RUN_BACKOFF_CS:-100}         # (a restart's second; the tests shorten it)
+  local -i worker=${AXLE_RUN_WORKER:-0}              # (no port: up once it's run 2 s)
   unset AXLE_RUN_USE_VENV AXLE_RUN_OWNER AXLE_RUN_OPEN_URL AXLE_RUN_ONFAIL AXLE_RUN_LOG_MAX AXLE_RUN_NOTIFY \
-        AXLE_RUN_HEALTH
+        AXLE_RUN_HEALTH AXLE_RUN_WORKER
   [[ -z $use ]] && _axle_venv_find $root && use=$REPLY
   _axle_run_enter_venv "$use"
   [[ -n $port ]] && export PORT=$port
@@ -71,6 +72,13 @@ _axle_run_supervise() {
         _axle_run_drop $name up $port $url $spid '' $restarts
         (( open && ! restarts )) && _axle_run_browse $url
         [[ $notify == (ready|all) ]] && (( ! restarts )) && _axle_run_notify "axle run: $name" "up on $url"
+        break
+      fi
+      # A worker (a Procfile's worker:, css:...) listens on nothing: up once it's lasted.
+      if (( worker )) && [[ -z $port ]] && (( EPOCHSECONDS - started >= 2 )); then
+        _axle_run_put $dir state up
+        _axle_run_drop $name up '' '' $spid '' $restarts
+        [[ $notify == (ready|all) ]] && (( ! restarts )) && _axle_run_notify "axle run: $name" "running"
         break
       fi
       _axle_run_log_trim $dir $maxbytes

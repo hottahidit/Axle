@@ -186,7 +186,7 @@ test_run_asks_first_then_remembers() {
   cd $T/fx/py-entry
   local out
   out=$(axle run </dev/null 2>&1) && fail "not approved, no terminal to ask in: it doesn't run"
-  assert_contains "$out" "First run of this command"
+  assert_contains "$out" "hasn't been approved yet: run it once in a terminal, or pass --yes"
   [[ $out == *"hello from py-entry"* ]] && fail "nothing ran"
   out=$(axle run --dry-run 2>&1)
   assert_contains "$out" "trust  not run before"
@@ -260,7 +260,7 @@ test_run_no_offers_other_recent_projects() {
   mkdir -p $T/gone; hist 300 $T/gone; rmdir $T/gone  # (gone: not offered)
   hist 200 $T/older; hist 100 $T/newer
   cd $HOME
-  axle_confirm() { [[ $1 == Run\ newer* ]] && return 1; return 0 }
+  fake_terminal; axle_confirm() { [[ $1 == Run\ newer* ]] && return 1; return 0 }
   axle_select() { print -r -- "OFFERED $1 ${(j:|:)@[3,-1]}"; REPLY=1 }
   local out REPLY
   out=$(axle run --fg </dev/null 2>&1; print "pwd=$PWD"); nocolor "$out"; out=$REPLY
@@ -280,7 +280,7 @@ test_run_no_offers_other_recent_projects() {
 test_run_missing_program_said_before_asking() {
   AXLE_MODULES=(run) load_tool
   fixtures
-  axle_confirm() { print -r -- "ASKED $1"; return 0 }
+  fake_terminal; axle_confirm() { print -r -- "ASKED $1"; return 0 }
   path=(${path:#*/node*})
   if whence -p pnpm >/dev/null; then return 0; fi   # (pnpm installed here: nothing to check)
   local out
@@ -371,6 +371,10 @@ log: $(tail -3 $d/log 2>/dev/null | cut -c1-80)"
 }
 
 # A small web project serving on a port of our choosing (tests/serve.py).
+# Questions answered by a test's own axle_confirm / axle_select, as in a terminal (without
+# one, axle run doesn't ask: an unapproved command just doesn't run).
+fake_terminal() { _axle_ui_tty </dev/null; _axle_ui_tty() { return 0 } }
+
 web_project() {
   mkdir -p $T/web; print '<!doctype html>' > $T/web/index.html; : > $T/web/requirements.txt
   local py; py=$(whence -p python3 || whence -p python) || return 1
@@ -656,13 +660,14 @@ test_run_self_starting_file_on_another_port() {
     'if __name__ == "__main__":' "    app.run(host=\"127.0.0.1\", port=$port, debug=True)" > $T/selfy/app.py
   : > $T/selfy/requirements.txt
   local out
-  _axle_ui_tty </dev/null          # (load the questions, then stand in for one)
+  fake_terminal                    # (load the questions, then stand in for them)
   axle_confirm() { print -r -- "ASKED $1"; return 0 }
+  axle_select() { REPLY=$2 }       # (the port clash: its default, the next port)
   cd $T/selfy; out=$(axle run </dev/null 2>&1) || fail "it runs: $out"
   assert_contains "$out" "Port $port is taken by your service taken" "the clash"
   assert_match "$out" "*is taken*ASKED Run it?*" "said before the first-run question"
   assert_contains "$out" "ASKED Run it?  python · Flask · ${py:t} app.py" "which asks about the file as it is"
-  assert_contains "$out" "using port $(( port + 1 ))" "the next port"
+  assert_contains "$out" "AXLE_RUN_PORT=$(( port + 1 ))" "the next port"
   assert_not_match "$out" "*PYTHONPATH*" "the hook isn't shown"
   assert_not_match "$out" "*can't be given*" "nor a reason it can't"
   wait_state selfy up
@@ -1109,7 +1114,7 @@ test_run_set_and_forget() {
   whence -p python3 >/dev/null || return 0
   env_project $T/proj
   cd $T/proj
-  _axle_ui_tty </dev/null; axle_confirm() { print -r -- "ASKED $1"; return 0 }
+  fake_terminal; axle_confirm() { print -r -- "ASKED $1"; return 0 }
   local out REPLY
   out=$(axle run set command python3 -c 'print("mine")' 2>&1)
   assert_contains "$out" "proj: command = python3 -c 'print(\"mine\")'" "several words kept apart"
@@ -1252,7 +1257,7 @@ test_run_open_and_trust_settings() {
     print -l '#!/bin/sh' "echo \"\$1\" >> $T/opened" > $T/bin/$o; chmod +x $T/bin/$o
   done
   path=($T/bin $path)
-  _axle_ui_tty </dev/null; axle_confirm() { print -r -- "ASKED $1"; return 0 }
+  fake_terminal; axle_confirm() { print -r -- "ASKED $1"; return 0 }
   cd $T/site
   axle run set command $py $ROOT/tests/serve.py $port >/dev/null
   axle run set kind service >/dev/null; axle run set port $port >/dev/null
@@ -1791,5 +1796,93 @@ test_run_groups() {
   assert_contains "$(axle run group dev rm $T/back)" "dev: front"
   assert_contains "$(axle run group dev rm)" "dev: no more"
   assert_contains "$(axle run group)" "no groups"
+  return 0
+}
+
+# For scripts and editors: bin/axle from another shell, ls --json, nothing asked without a
+# terminal (an unapproved command doesn't run, and says so), -q, no colours into a pipe.
+test_run_for_scripts() {
+  AXLE_MODULES=(run) load_tool
+  local REPLY port; free_port; port=$REPLY
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  mkdir -p $T/shop
+  print -r -- "web: $py $ROOT/tests/serve.py $port" > $T/shop/Procfile
+  cd $T/shop
+  # Not approved, no terminal: not run, and why (status 1).
+  sh -c "$ROOT/bin/axle run" </dev/null > $T/out 2>&1 && fail "ran unapproved: $(<$T/out)"
+  assert_contains "$(<$T/out)" "hasn't been approved yet"
+  [[ -d $HOME/.local/state/axle/run/services/shop ]] && fail "nothing started"
+  # --yes, quiet: what happened, no ▶ line or hint, no colours (a pipe).
+  sh -c "$ROOT/bin/axle run --yes -q" </dev/null > $T/out 2>&1 || fail "started: $(<$T/out)"
+  wait_state shop up
+  [[ $(<$T/out) == *▶* ]] && fail "-q: no ▶ line: $(<$T/out)"
+  [[ $(<$T/out) == *'(background'* ]] && fail "-q: no hints: $(<$T/out)"
+  [[ $(<$T/out) == *$'\e['* ]] && fail "no colours into a pipe"
+  # ls --json: valid, with what scripts need.
+  sh -c "$ROOT/bin/axle run ls --json" > $T/json || fail "ls --json"
+  $py -c 'import json,sys; d=json.load(open(sys.argv[1])); s=d[0]; assert s["name"]=="shop" and s["state"]=="up" and s["port"]==int(sys.argv[2]) and s["url"].endswith(sys.argv[2]) and isinstance(s["pid"], int), d' \
+    $T/json $port || fail "json: $(<$T/json)"
+  assert_contains "$(axle run ls --json)" '"kind":"service"'
+  axle run ls --bad >/dev/null 2>&1 && fail "an unknown option"
+  # NO_COLOR, even with FORCE_COLOR's pipe colours on.
+  [[ $(FORCE_COLOR=1 _axle_printp '%F{red}x%f') == *$'\e['* ]] || fail "FORCE_COLOR colours a pipe"
+  [[ $(NO_COLOR=1 FORCE_COLOR=1 _axle_printp '%F{red}x%f') == x ]] || fail "NO_COLOR: none"
+  sh -c "$ROOT/bin/axle run stop all" >/dev/null 2>&1
+  assert_eq "$(sh -c "$ROOT/bin/axle run ls --json")" '[]' "nothing running: []"
+  return 0
+}
+
+# Without a terminal, a database a service needs isn't started from the compose file
+# unasked (it used to be: the question's default was yes).
+test_run_needs_without_terminal() {
+  AXLE_MODULES=(run) load_tool
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  local REPLY dbport port; free_port; dbport=$REPLY; port=$(( dbport + 1 ))
+  mkdir -p $T/bin $T/app
+  print -r -- "#!/bin/sh
+echo \"docker \$*\" >> $T/docker.log" > $T/bin/docker
+  chmod +x $T/bin/docker
+  path=($T/bin $path)
+  print -r -- $'services:\n  db:\n    image: postgres:16' > $T/app/compose.yaml
+  print -r -- "DATABASE_URL=postgres://localhost:$dbport/app" > $T/app/.env
+  print '<!doctype html>' > $T/app/index.html
+  cd $T/app
+  axle run set command $py $ROOT/tests/serve.py $port >/dev/null
+  axle run set kind service >/dev/null; axle run set port $port >/dev/null
+  axle run </dev/null > $T/out 2>&1
+  [[ -e $T/docker.log ]] && fail "compose ran unasked: $(<$T/docker.log)"
+  assert_contains "$(<$T/out)" "not started without asking"
+  axle run stop >/dev/null 2>&1
+  return 0
+}
+
+# A Procfile's processes: web is the project, the others parts (up after 2 s, no port);
+# Procfile.dev first; release: not run. logs all: each line after its service's name.
+test_run_procfile_processes() {
+  AXLE_MODULES=(run) load_tool
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  local REPLY port; free_port; port=$REPLY
+  mkdir -p $T/shop
+  print -r -- "web: echo wrong" > $T/shop/Procfile
+  print -rl -- "web: $py $ROOT/tests/serve.py $port" \
+    'worker: while :; do echo tick; sleep 0.3; done' 'release: echo migrating' > $T/shop/Procfile.dev
+  cd $T/shop
+  local dry; dry=$(axle run --dry-run)
+  assert_contains "$dry" "shop-worker (.:worker)"
+  assert_contains "$dry" "Procfile.dev web: $py"
+  [[ $dry == *release* || $dry == *wrong* ]] && fail "release and Procfile not used: $dry"
+  axle run --yes </dev/null > $T/out 2>&1 || fail "started: $(<$T/out)"
+  wait_state shop up
+  wait_state shop-worker up
+  assert_eq "$(<$HOME/.local/state/axle/run/services/shop/port)" $port "web's port, from its command"
+  [[ -n $(<$HOME/.local/state/axle/run/services/shop-worker/port) ]] 2>/dev/null && fail "a worker has no port"
+  local out; out=$(axle run logs all -n 2)
+  assert_contains "$out" "shop-worker │ tick"
+  local -a mine=(${(M)${(f)out}:#shop-worker*})
+  assert_eq ${#mine} 2 "-n 2 lines of each: $out"
+  assert_contains "$(axle run logs shop-worker -n 1)" "tick"
+  axle run logs -x >/dev/null 2>&1 && fail "an unknown option"
+  axle run stop >/dev/null 2>&1
+  [[ -d $HOME/.local/state/axle/run/services/shop-worker ]] && fail "stopped with the project"
   return 0
 }

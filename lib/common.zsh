@@ -15,9 +15,16 @@ typeset -g AXLE_SEP='│'
 # Print text with prompt escapes (%F{…}, %B, …) expanded. Use this, never `print -P`:
 # with PROMPT_SUBST on (oh-my-zsh sets it), `print -P` also runs $(…) and `…` found in
 # the text, and the text here often comes from outside (history, status pages, files).
+# Into a pipe or a file, or with NO_COLOR (no-color.org) set: the same text, without
+# colours or bold (FORCE_COLOR keeps them).
 #   _axle_printp [-n] <text>
 _axle_printp() {
-  if [[ $1 == -n ]]; then print -rn -- "${(%)2}"; else print -r -- "${(%)1}"; fi
+  if [[ -n $NO_COLOR || ( ! -t 1 && -z $FORCE_COLOR ) ]]; then
+    setopt localoptions extendedglob
+    local n=-r; [[ $1 == -n ]] && { n=-rn; shift }
+    local s=${(%)1}
+    print $n -- "${s//$'\e'\[[0-9;]#m/}"
+  elif [[ $1 == -n ]]; then print -rn -- "${(%)2}"; else print -r -- "${(%)1}"; fi
 }
 
 # Exit status of the previous command, shown only when it failed.

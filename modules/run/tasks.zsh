@@ -97,7 +97,13 @@ _axle_run_task_cmd() {
   local -i yes=0
   local -a args=()
   local a
-  for a; do [[ $a == (--yes|-y) ]] && yes=1 || args+=($a); done
+  for a; do
+    case $a in
+      --yes|-y)   yes=1 ;;
+      --quiet|-q) local AXLE_RUN_QUIET=1 ;;
+      *)          args+=($a) ;;
+    esac
+  done
   _axle_run_yours_here || return 1
   local dir=$REPLY name=${REPLY:t} muted=${_axle_c[muted]:-244}
   if ! _axle_run_tasks_find $dir; then
@@ -142,7 +148,7 @@ _axle_run_task_cmd() {
   _axle_run_state_init
   _axle_run_approve $dir $name $yes || return 1
   _axle_run_show $dir
-  _axle_printp "%F{$muted}▶ ${REPLY//\%/%%}%f"
+  _axle_run_quiet || _axle_printp "%F{$muted}▶ ${REPLY//\%/%%}%f"
   _axle_run_exec $dir
   local -i code=$?
   (( code && code != 130 && code != 143 )) && _axle_run_explain $dir '' "axle run :$task"

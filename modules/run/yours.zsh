@@ -94,6 +94,8 @@ _axle_run_yours_apply() {
   local l
   typeset -ga _axle_run_yours=()
   _axle_run_yours_load $dir && for l in $reply; do s[${l%%=*}]=${l#*=}; done
+  # (a Procfile's other process: the folder's command, kind, port and health are its web's)
+  [[ -n $_axle_run_proc_cur ]] && unset 's[command]' 's[kind]' 's[port]' 's[health]'
   if [[ -n ${s[command]} ]]; then
     local -a words=(${(Q)${(z)s[command]}})
     if (( ${#words} )); then
@@ -145,7 +147,7 @@ _axle_run_yours_here() {
   _axle_run_root_here || return 1
   local root=$REPLY here=${PWD:a} best='' p
   _axle_run_parts $root
-  for p in ${reply:#.}; do
+  for p in ${${reply:#.}:#*:*}; do
     [[ $here == $root/$p || $here == $root/$p/* ]] && (( ${#p} > ${#best} )) && best=$p
   done
   REPLY=$root${best:+/$best}
