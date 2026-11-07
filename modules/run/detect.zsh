@@ -59,8 +59,10 @@ _axle_run_set() {
 _axle_run_detect() {
   typeset -ga _axle_run_cmd=() _axle_run_env=() _axle_run_cmd_detected=()
   typeset -g _axle_run_kind='' _axle_run_port='' _axle_run_what='' _axle_run_reason='' \
-             _axle_run_source='' _axle_run_portway='' _axle_run_use_venv=''
+             _axle_run_source='' _axle_run_portway='' _axle_run_use_venv='' _axle_run_onfail='' \
+             _axle_run_health=''
   typeset -gi _axle_run_self=0
+  typeset -ga _axle_run_needs_set=()
   _axle_run_yours_files $1                         # which .env files (yours.zsh)
   _axle_run_detect_any $1 && _axle_run_detect_port $1
   _axle_run_yours_apply $1                         # your settings over it

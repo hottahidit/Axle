@@ -88,21 +88,39 @@ _axle_complete() {
         '--purge[also settings and history, no questions]' ;;
     run)
       local -a svcs=(${XDG_STATE_HOME:-$HOME/.local/state}/axle/run/services/*(N/:t))
-      if (( CURRENT == 3 )) && [[ $PREFIX != -* ]]; then
+      if (( CURRENT == 3 )) && [[ $PREFIX == :* ]]; then
+        # The project's tasks (axle run :test): read from its files, nothing run.
+        local REPLY; local -a tasks=()
+        if (( $+functions[_axle_run_yours_here] )) && _axle_run_yours_here 2>/dev/null &&
+           _axle_run_tasks_find $REPLY 2>/dev/null; then
+          local t; for t in $_axle_run_task_order; do tasks+=(":$t:${_axle_run_task_from[$t]}"); done
+        fi
+        _describe task tasks
+      elif (( CURRENT == 3 )) && [[ $PREFIX != -* ]]; then
         _values action 'ls[what is running]' 'stop[stop a service]' 'restart[restart a service]' \
           'logs[a service'"'"'s output]' 'open[open its URL]' 'set[this project'"'"'s settings]' \
           'forget[drop this project'"'"'s settings and approvals]' \
           'deps[install its Python packages (a shared venv if they fit)]' \
-          'top[the services live: CPU, memory, logs]'
+          'top[the services live: CPU, memory, logs]' \
+          'env[what a service here gets]' 'group[several projects together]'
         (( $+functions[_axle_jump_complete] )) && { shift words; (( CURRENT-- )); _axle_jump_complete }
       elif [[ $words[3] == top ]]; then
         _values option '--mini[a few lines under the prompt]' '--full[the whole terminal]'
+      elif [[ $words[3] == group ]]; then
+        if (( CURRENT == 4 )); then
+          compadd -- ${XDG_STATE_HOME:-$HOME/.local/state}/axle/run/groups/*(N.:t)
+        elif (( CURRENT == 5 )); then
+          _values action 'add[add this project]' 'rm[take it out]' 'stop[stop them all]'
+        else
+          _files -/
+        fi
       elif [[ $words[3] == set ]]; then
         case $CURRENT in
           4) _values setting 'command[what runs]' 'port[the port it listens on]' \
-               'kind[service (background) or task (foreground)]' 'env-file[its .env file]' ;;
+               'kind[service (background) or task (foreground)]' 'env-file[its .env file]' 'restart[start it again after a crash]' 'needs[compose services it needs, started first]' 'health[a path it answers on when well]' ;;
           5) case $words[4] in
                kind)     compadd -- service task ;;
+               restart)  compadd -- on-crash no ;;
                env-file) _files -g '.env*(D)' ;;
              esac ;;
         esac

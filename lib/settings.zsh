@@ -84,6 +84,9 @@ typeset -gA _axle_settings=(
   AXLE_RUN_ON_EXIT      'tool|choice:keep,stop|keep|axle run'"'"'s services when their terminal closes: keep running, or stop'
   AXLE_RUN_OPEN         'tool|bool|0|axle run: open the browser when a service is ready'
   AXLE_RUN_UNIVENV      'tool|text||axle run deps: folders whose Python projects share one venv (folder/.venv), e.g. ~/Projects'
+  AXLE_RUN_RESTART      'tool|choice:no,on-crash|no|axle run: start a service again after it crashes (waiting 1, 2, 4... s; not after 5 quick crashes)'
+  AXLE_RUN_LOG_MAX      'tool|text|10M|axle run: a service'"'"'s log is cut to log.1 past this size (e.g. 10M, 500K; 0: no limit)'
+  AXLE_RUN_NOTIFY       'tool|choice:off,crash,ready,all|off|axle run: a desktop notification when a service crashes, is ready, or both'
   AXLE_RUN_TRUST        'tool|choice:ask,always|ask|axle run: ask before a project'"'"'s command runs the first time (always: never ask)'
 )
 

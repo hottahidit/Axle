@@ -9,8 +9,9 @@
 > **It's a work in progress, and `run` is off by default here.** Finding and running projects,
 > background services, ports, projects with several parts, and your own per-project settings
 > (`axle run set`, `--profile`), crash diagnosis (the fix on the line with Esc Esc), shared venvs
-> and a live monitor (`axle top`: btop, with an Axle mode for the services) are built and
-> being tested. `axle run` isn't described in the rest of this README yet,
+> a live monitor (`axle top`: btop, with an Axle mode for the services), and upkeep (log
+> limits, restart on crash, project tasks `axle run :test`, databases started first, health
+> checks, notifications, `axle run env`, groups) are built and being tested. `axle run` isn't described in the rest of this README yet,
 > and the plan is in [docs/legionary/ROADMAP.md](docs/legionary/ROADMAP.md).
 >
 > **To try it,** on this branch:

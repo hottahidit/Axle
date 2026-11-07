@@ -152,14 +152,17 @@ _axle_run_tree() {
   done
 }
 
-# A drop for a service: _axle_run_drop <name> starting|up|crashed [port] [url] [code]
+# A drop for a service: _axle_run_drop <name> starting|up|restarting|crashed [port] [url]
+# [pid] [code] [restarts]
 _axle_run_drop() {
   local name=$1 file=$_axle_run_drops/run-$1
   mkdir -p $_axle_run_drops 2>/dev/null
   local nl=$'\n' body
   case $2 in
     starting) body="text=$name${nl}icon=⏳${nl}level=info${nl}pid=$5" ;;
-    up)       body="text=$name${3:+ :$3}${nl}icon=⚡${nl}level=ok${nl}pid=$5${4:+${nl}link=$4}" ;;
+    up)       body="text=$name${3:+ :$3}${${7:#0}:+ ↻$7}${nl}icon=⚡${nl}level=ok${nl}pid=$5${4:+${nl}link=$4}" ;;
+    restarting) body="text=$name exited ($6), starting again${nl}icon=↻${nl}level=warn" ;;
+    unhealthy) body="text=$name${3:+ :$3} unhealthy${nl}icon=⚡${nl}level=warn${nl}pid=$5${4:+${nl}link=$4}" ;;
     crashed)  body="text=$name exited ($6) · axle run logs${nl}icon=✘${nl}level=alarm" ;;
   esac
   print -r -- "$body" >| $file.$$ && command mv -f -- $file.$$ $file
@@ -272,10 +275,10 @@ _axle_run_start() {
   _axle_run_put $dir port "$_axle_run_port"
   _axle_run_put $dir started $EPOCHSECONDS
   _axle_run_put $dir state starting
-  # Logs are kept to about 5 MB: the previous run's moves to log.1.
-  local -a st
-  [[ -f $dir/log ]] && zstat -A st +size -- $dir/log 2>/dev/null && (( st[1] > 5242880 )) &&
-    command mv -f -- $dir/log $dir/log.1
+  # After a crash: start it again (AXLE_RUN_RESTART, or `axle run set restart on-crash`).
+  local onfail=${_axle_run_onfail:-${AXLE_RUN_RESTART:-no}}
+  _axle_run_put $dir onfail $onfail
+  _axle_run_put $dir health "$_axle_run_health"
 
   # The environment: .env values (data), then what axle run sets (e.g. a changed port).
   local -a envs=()
@@ -296,7 +299,11 @@ _axle_run_start() {
   local zsh_bin=${commands[zsh]:-zsh}
   [[ -x /proc/$$/exe ]] && zsh_bin=/proc/$$/exe      # (the very zsh running now)
   _axle_run_put $dir venv "$_axle_run_use_venv"
-  AXLE_RUN_USE_VENV=$_axle_run_use_venv AXLE_RUN_OWNER=$owner AXLE_RUN_OPEN_URL=$open $zsh_bin -f -c 'source "$1/lib/project.zsh" && source "$1/modules/run/service.zsh" &&
+  AXLE_RUN_USE_VENV=$_axle_run_use_venv AXLE_RUN_OWNER=$owner AXLE_RUN_OPEN_URL=$open \
+  AXLE_RUN_ONFAIL=$onfail AXLE_RUN_LOG_MAX=${AXLE_RUN_LOG_MAX:-10M} AXLE_RUN_NOTIFY=${AXLE_RUN_NOTIFY:-off} \
+  AXLE_RUN_HEALTH=$_axle_run_health \
+  $zsh_bin -f -c 'source "$1/lib/project.zsh" && source "$1/modules/run/service.zsh" &&
+                  source "$1/modules/run/supervise.zsh" &&
                   shift && _axle_run_supervise "$@"' axle-run \
     $AXLE_ROOT $root $name $dir "$_axle_run_port" ${#envs} "${envs[@]}" "${_axle_run_cmd[@]}" \
     </dev/null >>$dir/log 2>&1 &!
@@ -307,107 +314,6 @@ _axle_run_start() {
     zselect -t 2
   done
   return 0
-}
-
-# The supervisor (its own zsh process, output already going to the log):
-#   _axle_run_supervise <root> <name> <dir> <port> <n> <n .env values...> <command...>
-_axle_run_supervise() {
-  local root=$1 name=$2 dir=$3 port=$4; shift 4
-  local -i n=$1; shift
-  local -a envs=()
-  (( n )) && envs=("${@[1,n]}")
-  shift $n
-  local -a cmd=("$@")
-  typeset -g _axle_run_dir=${dir:h:h}
-  trap '' HUP INT QUIT TTOU TTIN                   # keeps running when the terminal closes
-  # Killing the supervisor (by hand, from a process list: its command line has the
-  # project's name, the service's often doesn't) stops the service, as `axle run stop`.
-  local -i spid=0
-  trap '_axle_run_sup_term; exit 0' TERM
-  # AXLE_RUN_DEBUG: a trace of the supervisor in <dir>/trace (the tests turn it on).
-  if [[ -n $AXLE_RUN_DEBUG ]]; then exec 2>>$dir/trace; setopt xtrace; fi
-  _axle_run_put $dir watcher $$
-  cd -- $root || { _axle_run_put $dir state crashed; _axle_run_put $dir code 1; return 1 }
-  local REPLY e use=$AXLE_RUN_USE_VENV owner=$AXLE_RUN_OWNER open=$AXLE_RUN_OPEN_URL
-  unset AXLE_RUN_USE_VENV AXLE_RUN_OWNER AXLE_RUN_OPEN_URL
-  [[ -z $use ]] && _axle_venv_find $root && use=$REPLY
-  _axle_run_enter_venv "$use"
-  [[ -n $port ]] && export PORT=$port
-  for e in $envs; do export "$e"; done             # .env values (data) and ours, as given
-  "${cmd[@]}" 2>&1 &                               # (its errors to the log too)
-  spid=$!
-  _axle_run_pstart $spid && _axle_run_put $dir pstart $REPLY
-  _axle_run_put $dir pid $spid
-  # The tab lives as long as the service (not this supervisor, which could be killed).
-  _axle_run_drop $name starting '' '' $spid
-
-  # Until it answers: the port it printed in its log (a dev server may pick the next
-  # free one), else the one detected.
-  local url=''
-  while kill -0 $spid 2>/dev/null; do
-    _axle_run_owner_gone $owner && { _axle_run_sup_term; return 0 }
-    if _axle_run_log_port $dir/log; then
-      port=$REPLY url=$_axle_run_logurl
-    fi
-    if [[ -n $port ]] && _axle_run_port_up $port; then
-      url=${url:-http://localhost:$port}
-      _axle_run_put $dir port $port
-      _axle_run_put $dir url $url
-      _axle_run_put $dir state up
-      _axle_run_drop $name up $port $url $spid
-      (( open )) && _axle_run_browse $url
-      break
-    fi
-    zselect -t 25
-  done
-  # With an owner shell, look every 2 s whether it's still there.
-  if [[ -n $owner ]]; then
-    while kill -0 $spid 2>/dev/null; do
-      _axle_run_owner_gone $owner && { _axle_run_sup_term; return 0 }
-      zselect -t 200
-    done
-  fi
-  wait $spid
-  local -i code=$?
-  [[ -e $dir/stopping || ! -d $dir ]] && return 0
-  if (( code == 0 || code == 130 || code == 143 )); then
-    _axle_run_forget $name          # it finished, or was stopped (INT, TERM): nothing to show
-  else
-    _axle_run_put $dir state crashed
-    _axle_run_put $dir code $code
-    _axle_run_drop $name crashed '' '' '' $code
-  fi
-}
-
-# Has the shell that started it ended (_axle_run_owner_gone <pid:start time>)?
-_axle_run_owner_gone() {
-  [[ -n $1 ]] || return 1
-  local REPLY
-  kill -0 ${1%%:*} 2>/dev/null || return 0
-  _axle_run_pstart ${1%%:*} && [[ $REPLY != ${1#*:} ]]
-}
-
-# The supervisor got TERM (its variables in scope): stop the service and everything it
-# started, then forget it. `axle run stop` sends it TERM too, and does that itself.
-_axle_run_sup_term() {
-  [[ -e $dir/stopping || ! -d $dir ]] && return 0
-  : >| $dir/stopping
-  if (( spid )); then
-    local -a reply left
-    local pid
-    _axle_run_tree $spid
-    local -a pids=($reply)
-    kill -TERM $pids 2>/dev/null
-    local -i i
-    for i in {1..50}; do                           # up to 5 s, then forced
-      left=()
-      for pid in $pids; do kill -0 $pid 2>/dev/null && left+=($pid); done
-      (( ${#left} )) || break
-      zselect -t 10
-    done
-    (( ${#left} )) && kill -KILL $left 2>/dev/null
-  fi
-  _axle_run_forget $name
 }
 
 # --- the commands -----------------------------------------------------------------------
@@ -455,7 +361,7 @@ _axle_run_bg() {
   local state=''
   for i in {1..40}; do
     _axle_run_get $dir state; state=$REPLY
-    [[ $state == (up|crashed) || ! -d $dir ]] && break
+    [[ $state == (up|crashed|restarting) || ! -d $dir ]] && break
     zselect -t 25                                  # (its status is 1 on a plain timeout)
   done
   (( ${+_axle_run_watch[$name]} )) && _axle_run_watch_check
@@ -463,6 +369,12 @@ _axle_run_bg() {
     up)
       _axle_run_get $dir url
       _axle_printp "%F{$ok}⚡%f %B${name//\%/%%}%b running on ${REPLY//\%/%%}  %F{$muted}(background · axle run logs · stop)%f" ;;
+    restarting)
+      _axle_run_get $dir code
+      _axle_printp "%F{${_axle_c[warn]:-yellow}}↻%f %B${name//\%/%%}%b exited (code $REPLY), and starts again by itself (restart on-crash). Its log:"
+      _axle_run_show_log $dir/log
+      _axle_run_explain $root $dir/log "axle run restart $name" ''
+      return 0 ;;
     crashed)
       _axle_run_get $dir code
       _axle_printp "%F{$err}✘%f %B${name//\%/%%}%b exited (code $REPLY). Its log:"
@@ -507,13 +419,24 @@ _axle_run_ls() {
     if [[ $REPLY == compose ]]; then
       state=compose
     elif [[ $state == crashed ]]; then
-      _axle_run_get $dir code; state="exit $REPLY"; up=-
+      _axle_run_get $dir code; state="exit $REPLY"; up=- port=- url=''   # (nothing listens)
     elif _axle_run_get $dir pid; then
       local -a tree=($REPLY); local -i i=1 kb=0
       while (( i <= ${#tree} )); do tree+=(${=kids[$tree[i]]}); (( kb += ${rss[$tree[i]]:-0} )); (( i++ )); done
       (( kb )) && mem="$(( kb / 1024 ))M"
     fi
-    print -r -- "${(r:18:)name}${(r:10:)state}${(r:7:)port}${(r:9:)up}${(r:9:)mem}$url"
+    local row="${(r:18:)name}${(r:10:)state}${(r:7:)port}${(r:9:)up}${(r:9:)mem}"
+    if [[ -t 1 ]]; then                            # (colours for you, plain for a pipe)
+      local c=${_axle_c[muted]:-244}
+      case $state in
+        up|compose)            c=${_axle_c[ok]:-green} ;;
+        exit*)                 c=${_axle_c[error]:-red} ;;
+        restarting|unhealthy)  c=${_axle_c[warn]:-yellow} ;;
+      esac
+      _axle_printp "%B${row[1,18]//\%/%%}%b%F{$c}${row[19,28]//\%/%%}%f${row[29,-1]//\%/%%}%F{${_axle_c[path]:-cyan}}${url//\%/%%}%f"
+    else
+      print -r -- "$row$url"
+    fi
   done
 }
 
@@ -587,6 +510,8 @@ _axle_run_restart() {
   _axle_run_get $dir venv; typeset -g _axle_run_use_venv=$REPLY
   _axle_run_get $dir port; port=$REPLY
   _axle_run_get $dir kind; kind=$REPLY
+  _axle_run_get $dir onfail; local _axle_run_onfail=$REPLY
+  _axle_run_get $dir health; local _axle_run_health=$REPLY
   [[ -r $dir/cmd ]] || { print -u2 "axle run: don't know how $name was started"; return 1 }
   local -a reply words extra=()
   _axle_run_words $dir/cmd; words=($reply)
@@ -616,11 +541,14 @@ _axle_run_logs() {
   _axle_run_get $dir state
   local crashed=$REPLY
   [[ $crashed == crashed ]] && command rm -f -- $_axle_run_drops/run-$name
+  # (In a terminal, which log first; piped, just the log.)
+  [[ -t 1 ]] && _axle_printp "%F{${_axle_c[muted]:-244}}── ${name//\%/%%}: ${${dir/#$HOME/~}//\%/%%}/log, the last 50 lines${${follow:#0}:+, then as it grows (Ctrl-C stops)}%f"
   if (( follow )); then
     command tail -n 50 -f -- $dir/log
   else
     command tail -n 50 -- $dir/log
-    if [[ $crashed == crashed ]]; then                # and why, if it's a known cause
+    if [[ $crashed == crashed && -t 1 ]]; then        # and why, if it's a known cause (not
+                                                      # into a pipe: | head, | grep get the log)
       local root port
       _axle_run_get $dir root; root=$REPLY
       _axle_run_get $dir port; port=$REPLY

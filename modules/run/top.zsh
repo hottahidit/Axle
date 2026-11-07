@@ -227,6 +227,8 @@ _axle_top_state() {
   case $_axle_top[${n}:state] in
     up)       reply=(ok ⚡ up) ;;
     starting) reply=(muted ⏳ starting) ;;
+    restarting) reply=(warn ↻ restarting) ;;
+    unhealthy) reply=(warn ⚡ unhealthy) ;;
     crashed)  reply=(error ✘ "exit $_axle_top[${n}:code]") ;;
     gone)     reply=(muted · gone) ;;
     *)        reply=(muted · ${_axle_top[${n}:state]:--}) ;;

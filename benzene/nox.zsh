@@ -1054,15 +1054,17 @@ _axle_sudo_check() {
 # only armed while a live segment needs it, and wakes only when the text changes.
 
 _axle_timer_stop() {
+  _axle_timer_at=0
   [[ -n $_axle_timer_fd ]] || return
   zle -F $_axle_timer_fd 2>/dev/null
   exec {_axle_timer_fd}<&-
   _axle_timer_fd=''
 }
 
+typeset -gF _axle_timer_at=0                # when the running timer rings (0: none)
+
 _axle_timer_arm() {
-  _axle_timer_stop
-  (( $+builtins[zle] )) || return
+  (( $+builtins[zle] )) || { _axle_timer_stop; return }
   local -F delay=0
   local -i left=$(( _axle_sudo_until - EPOCHSECONDS ))
   if (( _axle_sudo_until > 0 && left > 0 )); then
@@ -1081,11 +1083,24 @@ _axle_timer_arm() {
     (( delay == 0 || tick < delay )) && delay=$tick
   fi
   # Drops (benzene/segments.zsh): look for changes every few seconds.
+  # (On whole multiples of the period, like the clock: prompts in a row agree on the time,
+  # so the timer running already is kept.)
   if (( $+functions[_axle_drop_poll] )); then
     _axle_drop_poll
-    (( REPLY > 0 && (delay == 0 || REPLY < delay) )) && delay=$REPLY
+    if (( REPLY > 0 )); then
+      local -F poll=$(( REPLY - EPOCHREALTIME % REPLY + 0.01 ))
+      (( delay == 0 || poll < delay )) && delay=$poll
+    fi
   fi
-  (( delay > 0 )) || return
+  (( delay > 0 )) || { _axle_timer_stop; return }
+  # The timer running already rings then (the next minute, mostly): keep it. A new one is a
+  # new process each prompt, and the old one's sleep would linger until its time anyway.
+  local -F at=$(( EPOCHREALTIME + delay ))
+  if [[ -n $_axle_timer_fd ]] && (( at - _axle_timer_at < 0.05 && _axle_timer_at - at < 0.05 )); then
+    return
+  fi
+  _axle_timer_stop
+  _axle_timer_at=$at
   exec {_axle_timer_fd}< <(command sleep $delay; print)
   zle -F -w $_axle_timer_fd _axle_timer_tick
 }

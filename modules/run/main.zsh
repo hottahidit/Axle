@@ -258,6 +258,8 @@ _axle_run_ready() {
   _axle_run_approve $dir $name $yes
   local -i st=$?
   typeset -ga _axle_run_cmd_detected=()
+  # What it needs (a database from its .env, axle run set needs): started first.
+  (( st )) || [[ $_axle_run_kind == compose ]] || _axle_run_needs $dir $name $yes
   return $st
 }
 
@@ -373,6 +375,9 @@ _axle_cmd_run() {
     set)      shift; _axle_run_set_cmd "$@"; return ;;
     forget)   shift; _axle_run_forget_project "$@"; return ;;
     deps)     shift; _axle_run_deps "$@"; return ;;
+    env)      shift; _axle_run_env_cmd "$@"; return ;;
+    group)    shift; _axle_run_group_cmd "$@"; return ;;
+    :*)       _axle_run_task_cmd "$@"; return ;;
     top)      shift; _axle_run_top "$@"; return ;;
   esac
   local dry=0 yes=0 mode='' config=0 only=0 vset=0 profile='' pset=0
@@ -444,66 +449,11 @@ _axle_cmd_run() {
     return 1
   fi
 
-  # Which parts: the only one; else the saved choice (asked the first time, or --config).
-  local -a chosen=()
-  if (( ${#parts} == 1 )); then
-    chosen=($parts)
-    (( config )) && _axle_printp "%F{$muted}${name//\%/%%} has one runnable part: nothing to choose.%f"
-  else
-    local -a saved=()
-    _axle_run_choice_load $root && saved=($reply)
-    if (( config || ! ${#saved} )); then
-      _axle_run_choose $root $parts || return 1
-      chosen=($reply)
-      _axle_run_choice_save $root $chosen
-      (( config )) && _axle_printp "%F{$muted}Saved: axle run starts ${(j:, :)chosen} in ${name//\%/%%} (change with --config).%f"
-    else
-      chosen=(${saved:*parts})
-      local gone
-      for gone in ${saved:|parts}; do
-        _axle_printp "%F{$warn}!%f saved part ${gone//\%/%%} has nothing to run any more: skipped %F{$muted}(axle run --config to choose again)%f"
-      done
-      if (( ! ${#chosen} )); then
-        _axle_printp "%F{$warn}!%f none of the saved parts can run: choose again"
-        _axle_run_choose $root $parts || return 1
-        chosen=($reply)
-        _axle_run_choice_save $root $chosen
-      fi
-    fi
-  fi
-
-  # Shown verbosely: the parts named (or, with no names, all chosen ones).
-  local -a vparts=()
-  local v p
-  if (( vset )); then
-    if (( ! ${#vnames} )); then
-      vparts=($chosen)
-    else
-      for v in $vnames; do
-        local hit=''
-        for p in $parts; do
-          _axle_run_partname $root $p
-          [[ $v == ($REPLY|$p|${p:t}) || ( $p == . && $v == $name ) ]] && { hit=$p; break }
-        done
-        if [[ -z $hit ]]; then
-          local -a known=()
-          for p in $parts; do _axle_run_partname $root $p; known+=($REPLY); done
-          print -u2 -r -- "axle run: no part '$v' in $name (parts: ${(j:, :)known})"
-          return 1
-        fi
-        vparts+=($hit)
-        (( ${chosen[(Ie)$hit]} )) || chosen+=($hit)        # named: run it even if not saved
-      done
-    fi
-    vparts=(${(u)vparts})
-  fi
-  local tmux=0
-  if (( ${#vparts} && ${#parts} > 1 )) && _axle_run_have_tmux; then
-    tmux=1
-  elif (( ${#vparts} > 1 )); then
-    print -u2 -r -- "axle run: too many to show verbosely in one shell (${#vparts}): install tmux to get a session for each, or name one"
-    return 1
-  fi
+  local -a chosen=() vparts=() failed=() sessions=() tasks=()
+  local -i tmux=0
+  local fg='' p
+  _axle_run_chosen || return 1
+  _axle_run_verbose || return 1
 
   if [[ $_axle_run_from == last ]] && (( ! yes )); then
     local -a names=()
@@ -522,11 +472,96 @@ _axle_cmd_run() {
     fi
   fi
 
-  # Start each part: services in the background, verbose ones in tmux; the one shown in
-  # this shell (or a single task) runs last, in the foreground. A part that can't run is
-  # reported, and the others still start.
-  local -a failed=() sessions=() tasks=()
-  local fg='' dir svc
+  _axle_run_start_parts
+  if (( ${#sessions} )); then
+    _axle_printp "%F{$muted}tmux sessions: ${(j:, :)sessions} (tmux attach -t <name>; Ctrl-b s to switch)%f"
+  fi
+  # (One part: what happened to it was just said.)
+  if (( ${#failed} && ${#chosen} > 1 )); then
+    _axle_printp "%F{${_axle_c[error]:-red}}✘%f didn't start: ${(j:, :)failed}"
+  fi
+  [[ -n $fg ]] && { _axle_run_foreground; return }
+  (( ${#sessions} )) && _axle_run_tmux_show $sessions[1]
+  (( ! ${#failed} ))
+}
+
+# The steps of `axle run` (each reads and sets _axle_cmd_run's locals, named on each).
+
+# Which parts run (chosen): the only one; else the saved choice, asked the first time (or
+# with --config). Uses root, name, parts, config. Status 1: cancelled.
+_axle_run_chosen() {
+  local REPLY
+  local -a reply
+  if (( ${#parts} == 1 )); then
+    chosen=($parts)
+    (( config )) && _axle_printp "%F{$muted}${name//\%/%%} has one runnable part: nothing to choose.%f"
+    return 0
+  fi
+  local -a saved=()
+  _axle_run_choice_load $root && saved=($reply)
+  if (( config || ! ${#saved} )); then
+    _axle_run_choose $root $parts || return 1
+    chosen=($reply)
+    _axle_run_choice_save $root $chosen
+    (( config )) && _axle_printp "%F{$muted}Saved: axle run starts ${(j:, :)chosen} in ${name//\%/%%} (change with --config).%f"
+    return 0
+  fi
+  chosen=(${saved:*parts})
+  local gone
+  for gone in ${saved:|parts}; do
+    _axle_printp "%F{$warn}!%f saved part ${gone//\%/%%} has nothing to run any more: skipped %F{$muted}(axle run --config to choose again)%f"
+  done
+  if (( ! ${#chosen} )); then
+    _axle_printp "%F{$warn}!%f none of the saved parts can run: choose again"
+    _axle_run_choose $root $parts || return 1
+    chosen=($reply)
+    _axle_run_choice_save $root $chosen
+  fi
+  return 0
+}
+
+# The parts shown verbosely (vparts: the named ones, else with no names all chosen ones;
+# a named one is run even if not chosen), and whether each gets a tmux session (tmux).
+# Uses vset, vnames, root, name, parts. Status 1: a name that's no part, or too many.
+_axle_run_verbose() {
+  local REPLY v p
+  if (( vset )); then
+    if (( ! ${#vnames} )); then
+      vparts=($chosen)
+    else
+      for v in $vnames; do
+        local hit=''
+        for p in $parts; do
+          _axle_run_partname $root $p
+          [[ $v == ($REPLY|$p|${p:t}) || ( $p == . && $v == $name ) ]] && { hit=$p; break }
+        done
+        if [[ -z $hit ]]; then
+          local -a known=()
+          for p in $parts; do _axle_run_partname $root $p; known+=($REPLY); done
+          print -u2 -r -- "axle run: no part '$v' in $name (parts: ${(j:, :)known})"
+          return 1
+        fi
+        vparts+=($hit)
+        (( ${chosen[(Ie)$hit]} )) || chosen+=($hit)
+      done
+    fi
+    vparts=(${(u)vparts})
+  fi
+  if (( ${#vparts} && ${#parts} > 1 )) && _axle_run_have_tmux; then
+    tmux=1
+  elif (( ${#vparts} > 1 )); then
+    print -u2 -r -- "axle run: too many to show verbosely in one shell (${#vparts}): install tmux to get a session for each, or name one"
+    return 1
+  fi
+  return 0
+}
+
+# Start each chosen part: services in the background, verbose ones in tmux; the one shown
+# in this shell (or a single task) is left in fg, to run last. A part that can't run goes
+# to failed, and the others still start. Uses root, chosen, vparts, tmux, only, mode, yes;
+# sets failed, sessions, tasks, fg.
+_axle_run_start_parts() {
+  local REPLY p dir svc
   for p in $chosen; do
     dir=$root${${p:#.}:+/$p}
     _axle_run_partname $root $p
@@ -550,7 +585,7 @@ _axle_cmd_run() {
     if [[ $_axle_run_kind == (service|compose) && $mode != fg ]] && _axle_run_alive $_axle_run_dir/services/$svc; then
       _axle_run_bg $dir $svc; continue
     fi
-    local bg=0
+    local -i bg=0
     [[ $_axle_run_kind == service ]] && bg=1
     [[ $mode == fg ]] && bg=0
     [[ $mode == bg && $_axle_run_kind != compose ]] && bg=1
@@ -572,31 +607,26 @@ _axle_cmd_run() {
     for p in $tasks; do _axle_run_partname $root $p; failed+=($REPLY); done
     print -u2 -r -- "axle run: ${#tasks} parts run in the foreground (${(j:, :)tasks}); one shell holds one: use --verbose with tmux, or name one"
   fi
-  if (( ${#sessions} )); then
-    _axle_printp "%F{$muted}tmux sessions: ${(j:, :)sessions} (tmux attach -t <name>; Ctrl-b s to switch)%f"
+}
+
+# The part in this shell (fg), in the foreground: its hooks, and why if it failed. Its exit
+# code. Uses root, fg, yes.
+_axle_run_foreground() {
+  local REPLY dir=$root${${fg:#.}:+/$fg} svc
+  _axle_run_partname $root $fg; svc=$REPLY
+  _axle_run_detect $dir || return 1
+  _axle_run_ready $dir $svc $yes || return 1
+  _axle_run_say_cmd $dir
+  _axle_emit run-start $svc $dir ${_axle_run_kind:-task}
+  _axle_run_exec $dir
+  local -i code=$?
+  if (( code && code != 130 && code != 143 )); then   # (not when stopped: Ctrl-C, TERM)
+    _axle_emit run-crash $svc $code
+    _axle_run_explain $dir '' 'axle run' $_axle_run_port
+  else
+    _axle_emit run-stop $svc
   fi
-  if (( ${#failed} )); then
-    _axle_printp "%F{${_axle_c[error]:-red}}✘%f didn't start: ${(j:, :)failed}"
-  fi
-  if [[ -n $fg ]]; then
-    dir=$root${${fg:#.}:+/$fg}
-    _axle_run_partname $root $fg; svc=$REPLY
-    _axle_run_detect $dir || return 1
-    _axle_run_ready $dir $svc $yes || return 1
-    _axle_run_say_cmd $dir
-    _axle_emit run-start $svc $dir ${_axle_run_kind:-task}
-    _axle_run_exec $dir
-    local -i code=$?
-    if (( code && code != 130 && code != 143 )); then   # (not when stopped: Ctrl-C, TERM)
-      _axle_emit run-crash $svc $code
-      _axle_run_explain $dir '' 'axle run' $_axle_run_port
-    else
-      _axle_emit run-stop $svc
-    fi
-    return $code
-  fi
-  (( ${#sessions} )) && _axle_run_tmux_show $sessions[1]
-  (( ! ${#failed} ))
+  return $code
 }
 
 # --dry-run: the project, why, and for each part what would run.
@@ -641,7 +671,7 @@ _axle_run_dry() {
     [[ $p != . ]] && _axle_venv_in $dir && print -r -- "${ind}venv   ${REPLY#$dir/}"
     _axle_run_show $dir
     print -r -- "${ind}run    $REPLY"
-    print -r -- "${ind}how    $_axle_run_what ($_axle_run_reason)"
+    print -r -- "${ind}how    $_axle_run_what · $_axle_run_reason"
     (( ${#_axle_run_yours} )) &&
       print -r -- "${ind}yours  ${(j:, :)_axle_run_yours} (axle run set; axle run forget drops them)"
     if [[ -n $_axle_run_profile || ${_axle_run_yours[(Ie)env-file]} -gt 0 ]]; then

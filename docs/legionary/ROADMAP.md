@@ -225,6 +225,22 @@ Each milestone ends with its tests passing (Linux + macOS CI) and is usable on i
   or `axle top --build`; `axle run top` opens it in that mode, and keeps this zsh view as
   the fallback (and for `--mini`). A zsh system monitor was tried and dropped for it.
 
+### M8 · Upkeep ✔ (v0.9.0)
+- Logs kept small: past `AXLE_RUN_LOG_MAX` (10M) the log goes to `log.1` (copied, then
+  emptied: the service keeps its file open), checked every 2 s by the supervisor.
+- Restart on crash (`set restart on-crash`, `AXLE_RUN_RESTART`): 1, 2, 4... s apart (≤ 30),
+  down for good after 5 crashes within 30 s of starting; ↻ in the tab.
+- Project tasks: `axle run :<task>` from package.json, justfile, Makefile, pyproject
+  scripts, cargo, go, pytest; trusted like the run command.
+- Needs: a local database from `.env` that isn't up, in the compose file, started first
+  (`set needs` to say them).
+- Health checks (`set health /path`), over zsh's TCP: up when it answers; unhealthy after 3
+  failures.
+- Notifications (`AXLE_RUN_NOTIFY`): Windows toast (WSL), osascript, notify-send.
+- `axle run env` (secrets masked), groups (`axle run group`).
+- **Done when:** each has its test (logs, restarts, tasks, needs, health, notify, env,
+  groups); the suite green on Linux and macOS.
+
 ### Merge (→ `main`)
 - Remove the branch note at the top of the README.
 - README section, CHANGELOG, help pages, Tab completion for every subcommand.

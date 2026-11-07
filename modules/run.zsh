@@ -7,6 +7,9 @@
 #   axle run ls · stop [name|all] · restart · logs [-f] · open     the background services
 #   axle run set [key value] · forget · --profile <name>             your settings
 #   axle run top [--mini]    the services live (CPU, memory, logs; keys to stop, restart, ...)
+#   axle run :<task> [words]  the project's test, build, lint... (axle run : lists them)
+#   axle run env [--show]    what a service here gets (.env files, axle run's, the venv)
+#   axle run group <name> [add|rm|stop]   several projects started and stopped together
 #   axle run deps [pkg...]   install its Python packages (a shared venv, if they fit it)
 #
 # Its code (modules/run/main.zsh) loads the first time you use it: nothing at startup.
@@ -27,10 +30,13 @@ _axle_lazy modules/run/yours.zsh _axle_run_set_cmd _axle_run_forget_project _axl
                                  _axle_run_yours_files _axle_run_yours_apply _axle_run_yours_get \
                                  _axle_run_yours_load _axle_run_yours_put _axle_run_hooked \
                                  _axle_run_watch_add _axle_run_watch_check _axle_run_watch_stopped \
-                                 _axle_run_yours_here
+                                 _axle_run_yours_here _axle_run_env_cmd _axle_run_env_mask _axle_run_root_here
 _axle_lazy modules/run/diagnose.zsh _axle_run_diagnose _axle_run_explain _axle_run_fix_set \
-                                    _axle_run_fix_clear
+                                    _axle_run_fix_clear _axle_run_diag_pm _axle_run_compose_db
 _axle_lazy modules/run/deps.zsh _axle_run_deps _axle_run_unifolder _axle_run_venv_shared _axle_run_deps_list
+_axle_lazy modules/run/needs.zsh _axle_run_needs _axle_run_needs_env _axle_run_needs_compose
+_axle_lazy modules/run/groups.zsh _axle_run_group_cmd _axle_run_group_load
+_axle_lazy modules/run/tasks.zsh _axle_run_task_cmd _axle_run_tasks_find
 _axle_lazy modules/run/top.zsh _axle_run_top _axle_top_init _axle_top_sample _axle_top_full _axle_top_mini \
                                _axle_top_draw
 _axle_lazy modules/run/detect.zsh _axle_run_detect _axle_run_read _axle_run_code_port

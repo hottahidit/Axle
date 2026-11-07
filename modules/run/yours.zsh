@@ -16,7 +16,7 @@
 # small files read), and only while one this shell started is being watched.
 
 typeset -g  _axle_run_dir=${_axle_run_dir:-${XDG_STATE_HOME:-$HOME/.local/state}/axle/run}
-typeset -ga _axle_run_set_keys=(command port kind env-file)
+typeset -ga _axle_run_set_keys=(command port kind env-file restart needs health)
 typeset -gA _axle_run_yours_cache=()
 typeset -gi _axle_run_yours_loaded=0
 typeset -g  _axle_run_profile=${_axle_run_profile:-}
@@ -35,7 +35,7 @@ _axle_run_yours_all() {
     while IFS= read -r line; do
       case $line in
         root=*) root=${line#root=} ;;
-        (command|port|kind|env-file|profile)=*) keep+=("$line") ;;
+        (command|port|kind|env-file|restart|needs|health|profile)=*) keep+=("$line") ;;
       esac
     done < $f
     [[ -n $root ]] && (( ${#keep} )) && _axle_run_yours_cache[$root]=${(pj:\n:)keep}
@@ -117,6 +117,9 @@ _axle_run_yours_apply() {
     _axle_run_yours+=(port)
   fi
   [[ -n ${s[env-file]} ]] && _axle_run_yours+=(env-file)
+  [[ -n ${s[restart]} ]] && { typeset -g _axle_run_onfail=${s[restart]}; _axle_run_yours+=(restart) }
+  [[ -n ${s[needs]} ]] && { typeset -ga _axle_run_needs_set=(${=s[needs]}); _axle_run_yours+=(needs) }
+  [[ -n ${s[health]} ]] && { typeset -g _axle_run_health=${s[health]}; _axle_run_yours+=(health) }
   return 0
 }
 
@@ -153,24 +156,14 @@ _axle_run_yours_here() {
 #   axle run set <key> <value...>   set one: command, port, kind, env-file
 #   axle run set <key>              remove it (back to what's detected)
 _axle_run_set_cmd() {
+  setopt localoptions extendedglob
   local REPLY dir
   _axle_run_yours_here || return 1
   dir=$REPLY
   local name=${dir:t} muted=${_axle_c[muted]:-244}
   [[ $dir != $_axle_run_here_root ]] && name="${dir:t} (part of ${_axle_run_here_root:t})"
   if (( ! $# )); then
-    local -a reply
-    _axle_run_yours_all
-    if _axle_run_yours_load $dir; then
-      _axle_printp "%B${name//\%/%%}%b"
-      local l
-      for l in $reply; do print -r -- "  ${(r:9:)${l%%=*}}${l#*=}"; done
-    else
-      print -r -- "$name: nothing set (axle run set command|port|kind|env-file <value>)"
-    fi
-    if [[ $dir != $_axle_run_here_root ]] && _axle_run_yours_get $_axle_run_here_root profile; then
-      print -r -- "  profile  $REPLY (the project's)"
-    fi
+    _axle_run_set_show $dir "$name"
     return 0
   fi
   local key=$1; shift
@@ -196,6 +189,12 @@ _axle_run_set_cmd() {
       [[ $value == <1-65535> ]] || { print -u2 -r -- "axle run set: a port is a number from 1 to 65535"; return 1 } ;;
     kind)
       [[ $value == (service|task) ]] || { print -u2 -r -- "axle run set: kind is service (in the background) or task (in the foreground)"; return 1 } ;;
+    health)
+      [[ $value == /[^[:space:][:cntrl:]]# ]] || { print -u2 -r -- "axle run set: health is a path it answers on, e.g. /healthz"; return 1 } ;;
+    needs)
+      [[ $value == [A-Za-z0-9_.\ -]## ]] || { print -u2 -r -- "axle run set: needs is the compose services it needs, e.g. db redis"; return 1 } ;;
+    restart)
+      [[ $value == (on-crash|no) ]] || { print -u2 -r -- "axle run set: restart is on-crash (start it again after a crash) or no"; return 1 } ;;
     env-file)
       local f=$value; [[ $f == /* ]] || f=$dir/$f
       [[ -f $f ]] || _axle_printp "%F{${_axle_c[warn]:-yellow}}!%f ${${f/#$HOME/~}//\%/%%} doesn't exist (yet)" ;;
@@ -203,6 +202,56 @@ _axle_run_set_cmd() {
   _axle_run_yours_put $dir $key $value || return 1
   print -r -- "$name: $key = $value"
   [[ $key == command ]] && _axle_printp "%F{$muted}(yours, so it runs without asking; words as the shell splits them, no shell features: for those, sh -c '…')%f"
+  return 0
+}
+
+# `axle run set` alone: every setting, yours (in colour), else what's detected (dimmed), else
+# what it's for.
+_axle_run_set_show() {
+  local dir=$1 name=$2 REPLY key value
+  local muted=${_axle_c[muted]:-244} accent=${_axle_c[accent]:-magenta}
+  local -a reply
+  local -A mine=() detected=()
+  _axle_run_yours_all
+  if _axle_run_yours_load $dir; then
+    local l
+    for l in $reply; do mine[${l%%=*}]=${l#*=}; done
+  fi
+  # What runs here without them (detection, quietly; nothing runs).
+  typeset -g _axle_run_profile=''
+  _axle_run_yours_get $_axle_run_here_root profile && _axle_run_profile=$REPLY
+  if _axle_run_detect $dir 2>/dev/null; then
+    detected[command]=${(j: :)${(@q-)_axle_run_cmd}}
+    detected[port]=$_axle_run_port detected[kind]=$_axle_run_kind
+    local -a files=(${^${_axle_run_envfiles:-$dir/.env}}(N))   # (the ones that exist)
+    (( ${#files} )) && detected[env-file]=${(j:, :)${(@)files#$dir/}}
+  fi
+  local -A origin=(restart '(AXLE_RUN_RESTART)')
+  detected[restart]=${AXLE_RUN_RESTART:-no}
+  [[ -n $AXLE_RUN_RESTART ]] || origin[restart]='(the default)'
+  local -A about=(
+    command 'what runs'                port 'the port it listens on'
+    kind 'service or task'             env-file 'its .env file'
+    restart 'start it again after a crash: on-crash'
+    needs 'compose services started first'   health 'a path it answers on when well'
+  )
+  _axle_printp "%B${name//\%/%%}%b  %F{$muted}(axle run set <setting> <value>; the setting alone: back to what's detected)%f"
+  local -i cols=${COLUMNS:-80}
+  (( cols > 20 )) || cols=80
+  for key in command port kind env-file restart needs health; do
+    if [[ -n $mine[$key] ]]; then
+      value=$mine[$key]
+      (( ${#value} > cols - 14 )) && value="${value[1,cols-15]}…"
+      _axle_printp "  ${(r:9:)key} %F{$accent}${value//\%/%%}%f"
+    elif [[ -n $detected[$key] ]]; then
+      value=$detected[$key]
+      (( ${#value} > cols - 25 )) && value="${value[1,cols-26]}…"
+      _axle_printp "  ${(r:9:)key} %F{$muted}${value//\%/%%} ${origin[$key]:-(detected)}%f"
+    else
+      _axle_printp "  ${(r:9:)key} %F{$muted}–  ${about[$key]}%f"
+    fi
+  done
+  [[ -n $_axle_run_profile ]] && _axle_printp "  ${(r:9:)${:-profile}} %F{$accent}${_axle_run_profile//\%/%%}%f %F{$muted}(axle run --profile; the project's)%f"
   return 0
 }
 
@@ -297,6 +346,12 @@ _axle_run_watch_check() {
         unset "_axle_run_watch[$name]"
         _axle_run_get $dir code
         _axle_emit run-crash $name "$REPLY" ;;
+      restarting)                                  # (a crash it comes back from: once each)
+        _axle_run_get $dir restarts
+        [[ ${_axle_run_watch[$name]} == restart:$REPLY ]] && continue
+        _axle_run_watch[$name]=restart:$REPLY
+        _axle_run_get $dir code
+        _axle_emit run-crash $name "$REPLY" ;;
     esac
   done
   (( ${#_axle_run_watch} )) || precmd_functions=(${precmd_functions:#_axle_run_watch_check})
@@ -309,5 +364,80 @@ _axle_run_watch_stopped() {
   unset "_axle_run_watch[$1]"
   _axle_emit run-stop $1
   (( ${#_axle_run_watch} )) || precmd_functions=(${precmd_functions:#_axle_run_watch_check})
+  return 0
+}
+
+# --- axle run env ------------------------------------------------------------------------
+
+# A value to show (REPLY): masked when its name says it's secret (key, secret, token,
+# password, credential, private, auth, cookie, session), and a URL's password always.
+_axle_run_env_mask() {
+  setopt localoptions extendedglob
+  local name=$1 v=$2
+  if [[ $name == (#i)*(key|secret|token|pass|pwd|credential|private|auth|cookie|session)* ]]; then
+    REPLY="•••••••• (${#v} characters)"
+  elif [[ $v == (#b)([a-z][a-z0-9+.-]#://[^:/@]##:)([^@]##)(@*) ]]; then
+    REPLY="$match[1]••••$match[3]"
+  else
+    REPLY=$v
+  fi
+}
+
+# axle run env [--show]: what a service here gets: its .env files in order (a later one's
+# value replaces an earlier one's), what axle run adds, and the venv. Secrets masked
+# (--show: as they are).
+_axle_run_env_cmd() {
+  local REPLY show=0 a
+  for a; do [[ $a == --show ]] && show=1; done
+  _axle_run_yours_here || return 1
+  local dir=$REPLY root=$_axle_run_here_root muted=${_axle_c[muted]:-244} accent=${_axle_c[accent]:-magenta}
+  typeset -g _axle_run_profile=''
+  _axle_run_yours_get $root profile && _axle_run_profile=$REPLY
+  _axle_run_detect $dir
+  local name=${dir:t}
+  _axle_printp "%B${name//\%/%%}%b %F{$muted}gets (${_axle_run_kind:-nothing detected}${_axle_run_profile:+, profile $_axle_run_profile}; --show: secrets too)%f"
+  local f e key
+  local -A seen=()
+  local -a reply files=(${_axle_run_envfiles:-$dir/.env})
+  local -i width=0 any=0
+  for f in $files; do
+    _axle_run_envfile $f || continue
+    for e in $reply; do key=${e%%=*}; (( ${#key} > width )) && width=${#key}; done
+  done
+  for e in $_axle_run_env PORT=; do key=${e%%=*}; (( ${#key} > width )) && width=${#key}; done
+  for f in $files; do
+    if ! _axle_run_envfile $f; then
+      [[ -e $f ]] || continue
+    fi
+    any=1
+    _axle_printp "  %F{${_axle_c[path]:-cyan}}${${f/#$dir\//}//\%/%%}%f"
+    for e in $reply; do
+      key=${e%%=*}
+      if (( show )); then REPLY=${e#*=}; else _axle_run_env_mask $key "${e#*=}"; fi
+      local note=''
+      (( ${+seen[$key]} )) && note="  (over ${seen[$key]})"
+      seen[$key]=${f:t}
+      _axle_printp "    ${(r:width:)key//\%/%%}  ${REPLY//\%/%%}%F{$muted}${note//\%/%%}%f"
+    done
+  done
+  (( any )) || _axle_printp "  %F{$muted}no .env file%f"
+  # What axle run adds.
+  local -a ours=()
+  [[ $_axle_run_kind == service && -n $_axle_run_port ]] && ours+=(PORT=$_axle_run_port)
+  for e in $_axle_run_env; do
+    [[ $e == PYTHONPATH=$AXLE_ROOT/modules/run/py* ]] && e="PYTHONPATH=(axle run's port hook, first)"
+    ours+=($e)
+  done
+  if (( ${#ours} )); then
+    _axle_printp "  %F{$accent}axle run%f"
+    for e in $ours; do
+      key=${e%%=*}
+      _axle_printp "    ${(r:width:)key//\%/%%}  ${${e#*=}//\%/%%}"
+    done
+  fi
+  # The venv.
+  if _axle_venv_find $dir && [[ -x $REPLY/bin/python ]]; then
+    _axle_printp "  %F{$accent}venv%f ${${REPLY/#$HOME/~}//\%/%%} %F{$muted}(its bin/ first on PATH, VIRTUAL_ENV)%f"
+  fi
   return 0
 }

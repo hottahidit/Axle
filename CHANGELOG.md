@@ -24,6 +24,11 @@ Fixed for everyone:
   `_axle_hl_runnable:14: invalid subscript` over the line.
 
 Also for everyone:
+- Benzene: the timer behind the clock and drops is kept from one prompt to the next when it
+  rings at the same time (now on whole multiples of the drop interval too). Before, each
+  prompt started a new `sleep` process, and the old ones lingered until their time: twenty
+  quick prompts left twenty sleeping; now one. Enter to the next prompt: about 4–5 ms
+  (it was 4.6–9.8).
 - `axle top`: the system live, with btop. Axle carries btop 1.4.8 (`vendor/btop`,
   Apache-2.0, by Aristocratos) with an **Axle mode** added: key `A` shows only the processes
   `axle run` started (its services and everything under them), and `axle run top` opens it
@@ -129,6 +134,42 @@ New:
     whose versions conflict gets its own `.venv` instead, used from then on. Without a
     shared venv it installs into the project's own (making it if needed). Crash fixes for a
     missing module use `axle run deps` there.
+  - Upkeep: a service's log is cut past `AXLE_RUN_LOG_MAX` (10M; what came before goes to
+    `log.1`), checked every 2 s while it runs. `axle run set restart on-crash` (or
+    `AXLE_RUN_RESTART=on-crash`) starts a service again after a crash, waiting 1, 2, 4... s
+    (at most 30), and leaves it down after 5 crashes in a row each within 30 s of starting;
+    its tab shows ↻ while it waits, and the count after (`⚡ web :8000 ↻2`); each crash
+    fires `run-crash`.
+  - Project tasks: `axle run :test`, `:build`, `:lint`... the same words in every project,
+    read as text from package.json scripts (npm, pnpm, yarn, bun), a justfile, a Makefile,
+    pyproject's `[project.scripts]`, and Cargo's, Go's and pytest's own; `axle run :` lists
+    them, Tab completes them, words after the name go along (after `--` for npm). Asked the
+    first time, like any of the project's commands (again when what it comes from changes).
+  - What a service needs, started first: a database its `.env` points at on this machine
+    (`DATABASE_URL=postgres://...@localhost:5432`, `REDIS_URL`, MySQL, MongoDB, RabbitMQ)
+    that isn't answering and that the project's compose file has is started with
+    `docker compose up -d <it>` (asked the first time) and waited for; or say them:
+    `axle run set needs db redis`.
+  - Health checks: `axle run set health /healthz` makes a service up only once that path
+    answers (2xx or 3xx; asked through zsh's own TCP, no curl), and checks it every 10 s:
+    3 failures in a row show it `unhealthy` (tab, `ls`, `top`), until it answers again.
+  - `AXLE_RUN_NOTIFY=crash|ready|all`: a desktop notification when a service crashes,
+    becomes ready, or turns unhealthy, from its supervisor (no shell needs to be open): a
+    Windows toast on WSL, `osascript` on macOS, `notify-send` on Linux. Only plain
+    characters of a name reach them.
+  - `axle run env`: what a service here gets, in order: each `.env` file (a later one's value
+    noted over an earlier one's), what axle run adds (PORT, the port hook), the venv.
+    Secrets are masked (names like *KEY*, *SECRET*, *TOKEN*, *PASSWORD*, and a URL's
+    password); `--show` shows them.
+  - Groups: `axle run group dev add` (this project, or paths), `axle run group dev` starts
+    them all in the background (each asked as axle run asks), `axle run group dev stop`
+    stops their services, `axle run group` lists them.
+  - Clearer screens: `axle run set` alone shows every setting, yours in colour, else
+    what's detected (dimmed), else what it's for; `axle run :` groups the tasks under the
+    file they come from; `axle run ls` colours the states (up, exited, restarting,
+    unhealthy) in a terminal and shows no port for an exited service; `axle run logs`
+    says which log in a terminal, and piped (`| head`, `| grep`) gives just the log;
+    "didn't start" is only said after several parts (one part's failure was just shown).
   - `axle run top`: Axle's btop showing only the services (above), when it's built;
     otherwise (and with `--mini` / `--full`) the services live, in the shell. The full view fills the terminal:
     their total CPU over time, each service with its state, port, uptime, CPU and memory

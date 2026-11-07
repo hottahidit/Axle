@@ -813,7 +813,7 @@ test_run_failing_part_shows_its_whole_log() {
   assert_contains "$out" "│ first line" "the whole log, from the first line"
   assert_contains "$out" "│ 20" "the middle"
   assert_contains "$out" "│ last line" "to the last"
-  assert_contains "$out" "didn't start: app"
+  [[ $out == *"didn't start"* ]] && fail "one part: its crash was just shown"
   (( rc )) || fail "a part that fails: an error status"
   return 0
 }
@@ -1104,6 +1104,7 @@ env_project() {
 # Your command: runs without asking, survives a new shell, can be shown, refused when
 # wrong, removed; forget drops settings and approvals.
 test_run_set_and_forget() {
+  setopt localoptions extendedglob
   AXLE_MODULES=(run) load_tool
   whence -p python3 >/dev/null || return 0
   env_project $T/proj
@@ -1116,7 +1117,7 @@ test_run_set_and_forget() {
   assert_contains "$out" "mine" "your command runs"
   [[ $out == *ASKED* ]] && fail "and isn't asked about: $out"
   out=$(zsh -fc "HOME=$HOME XDG_STATE_HOME=$XDG_STATE_HOME AXLE_MODULES=(run); source $ROOT/axle.plugin.zsh; cd $T/proj; axle run --dry-run" 2>&1)
-  assert_contains "$out" "how    your command (axle run set command)" "in a new shell too"
+  assert_contains "$out" "how    your command · axle run set command" "in a new shell too"
   assert_contains "$out" "yours  command" "and says it's yours"
   axle run set port 99999 2>/dev/null && fail "a port is 1-65535"
   axle run set kind daemon 2>/dev/null && fail "a kind is service or task"
@@ -1132,7 +1133,8 @@ test_run_set_and_forget() {
   assert_contains "$out" "forgot its settings, saved parts and approved commands"
   out=$(axle run </dev/null 2>&1)
   assert_contains "$out" "ASKED Run it?" "asked again after forget"
-  assert_contains "$(axle run set)" "proj: nothing set" "settings gone"
+  out=$(axle run set); out=${out//$'\e'\[[0-9;]#m/}
+  assert_contains "$out" "command   python3 main.py (detected)" "settings gone: what's detected again"
 }
 
 # A port of yours goes to the server the way a taken port's replacement would, and the
@@ -1374,8 +1376,9 @@ test_run_crash_fix_on_the_line() {
   _axle_run_fix_clear fix
   _axle_fix_cmd; local line; read -z line
   assert_eq "$line" ".venv/bin/pip install requests && axle run restart api" "fix"
-  axle run logs api > $T/out 2>&1
-  assert_contains "$(<$T/out)" "no module named requests"
+  axle run logs api > $T/out 2>&1                  # (into a file: the log, no explanation)
+  assert_contains "$(<$T/out)" "No module named 'requests'"
+  [[ $(<$T/out) == *"no module named requests ("* ]] && fail "piped logs are just the log"
   _axle_run_fix_clear ls
   assert_eq "$_axle_run_fix" "" "cleared by the next command"
   (( ${preexec_functions[(Ie)_axle_run_fix_clear]} )) && fail "and unhooked"
@@ -1516,5 +1519,277 @@ test_run_top_views() {
   local -F ms=$(( (EPOCHREALTIME - t0) * 100 ))
   (( ms < 50 )) || fail "a sample and a frame took ${ms} ms"
   axle run stop all >/dev/null 2>&1
+  return 0
+}
+
+# --- M8: the run's upkeep ---------------------------------------------------------------
+
+# A log past AXLE_RUN_LOG_MAX is cut: what came before goes to log.1, and it goes on.
+test_run_log_is_kept_small() {
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/chatty
+  typeset -ga _axle_run_cmd=(sh -c 'i=0; while :; do echo "line $i: some output to fill the log up"; i=$((i+1)); sleep 0.005; done')
+  typeset -g _axle_run_kind=service _axle_run_port=''
+  AXLE_RUN_LOG_MAX=4K _axle_run_start $T/chatty chatty
+  local d=$HOME/.local/state/axle/run/services/chatty
+  local -i i
+  for i in {1..80}; do [[ -s $d/log.1 ]] && break; sleep 0.1; done
+  [[ -s $d/log.1 ]] || fail "log.1 after the limit"
+  local -a st; zstat -A st +size -- $d/log
+  (( st[1] < 4096 * 3 )) || fail "the log was cut ($st[1] bytes)"
+  assert_contains "$(<$d/log.1)$(<$d/log)" "axle run: the log reached 4K"
+  _axle_run_alive $d || fail "it keeps running"
+  axle run stop chatty >/dev/null
+  return 0
+}
+
+# Restart on crash: again after each crash (hooks once each), the count in the tab; after 5
+# quick crashes it stays down; stopped, it's not started again; the setting per project.
+test_run_restart_on_crash() {
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/flaky
+  print -r -- 0 > $T/count
+  typeset -ga _axle_run_cmd=(sh -c "n=\$(cat $T/count); echo \$((n+1)) > $T/count; echo try; exit 3")
+  typeset -g _axle_run_kind=service _axle_run_port=''
+  local d=$HOME/.local/state/axle/run/services/flaky
+  _AXLE_RUN_BACKOFF_CS=5 AXLE_RUN_RESTART=on-crash _axle_run_start $T/flaky flaky
+  local -i i
+  for i in {1..100}; do [[ $(<$d/state 2>/dev/null) == crashed ]] && break; sleep 0.1; done
+  assert_eq "$(<$d/state)" crashed "stays down after 5 quick crashes"
+  assert_eq "$(<$T/count)" 6 "the first run and 5 more"
+  assert_eq "$(<$d/restarts)" 5 "counted"
+  assert_contains "$(<$d/log)" "crashed 6 times in a row"
+  assert_contains "$(<$d/log)" "starting it again in 1s (restart 1)"
+  axle run stop flaky >/dev/null 2>&1
+  # Stopped while it waits to start again: it stays stopped.
+  print -r -- 0 > $T/count
+  _AXLE_RUN_BACKOFF_CS=300 AXLE_RUN_RESTART=on-crash _axle_run_start $T/flaky flaky
+  for i in {1..50}; do [[ $(<$d/state 2>/dev/null) == restarting ]] && break; sleep 0.1; done
+  assert_eq "$(<$d/state)" restarting "waiting to start again"
+  _axle_run_load_drop() { REPLY=$(<$HOME/.cache/axle/drops/run-flaky) }
+  _axle_run_load_drop; assert_contains "$REPLY" "starting again"
+  axle run stop flaky >/dev/null 2>&1
+  sleep 0.5
+  assert_eq "$(<$T/count)" 1 "not started again once stopped"
+  [[ -d $d ]] && fail "and forgotten"
+  # Per project: axle run set restart on-crash.
+  print '<!doctype html>' > $T/flaky/index.html     # (a project)
+  cd $T/flaky
+  axle run set command sh -c 'exit 4' >/dev/null; axle run set kind service >/dev/null
+  axle run set restart on-crash >/dev/null
+  _AXLE_RUN_BACKOFF_CS=300 axle run --yes > $T/out 2>&1
+  assert_contains "$(<$T/out)" "starts again by itself"
+  assert_eq "$(<$d/onfail)" on-crash "saved with it"
+  axle run stop flaky >/dev/null 2>&1
+  axle run set restart nope >/dev/null 2>&1 && fail "on-crash or no"
+  return 0
+}
+
+# axle run :task: found in package.json, a justfile, a Makefile, pyproject, cargo, go, pytest
+# (read as text); run with the words after it; asked the first time; its exit code.
+test_run_tasks() {
+  setopt localoptions extendedglob
+  AXLE_MODULES=(run) load_tool
+  _axle_ui_tty </dev/null                          # (loads ui.zsh before any mock)
+  mkdir -p $T/bin $T/p/tests
+  local tool
+  for tool in npm make just; do
+    print -r -- "#!/bin/sh
+echo \"$tool \$*\" >> $T/ran
+[ \"\$2\" = fails ] && exit 7
+exit 0" > $T/bin/$tool
+    chmod +x $T/bin/$tool
+  done
+  path=($T/bin $path)
+  print -r -- '{"scripts": {"test": "jest", "pretest": "lint", "preview": "vite preview", "fails": "x"}}' > $T/p/package.json
+  print -r -- $'.PHONY: all\nCC := gcc\nall: build\nbuild:\n\techo b\n%.o: %.c\n\tcc $<\nclean:\n\trm -rf out' > $T/p/Makefile
+  print -r -- $'set shell := ["bash", "-c"]\nalias b := build\ndeploy env="prod":\n    echo {{env}}' > $T/p/justfile
+  print -r -- $'[project]\nname = "p"\n[project.scripts]\nserve = "p.app:main"\n[tool.x]\nnot = "this"' > $T/p/pyproject.toml
+  : > $T/p/Cargo.toml
+  cd $T/p
+  local out=$(axle run : 2>&1)
+  out=${out//$'\e'\[[0-9;]#m/}
+  local t
+  for t in ':test  ' ':preview' ':fails' ':deploy' ':all' ':build' ':clean' ':serve' ':check' ':clippy'; do
+    assert_contains "$out" "$t"
+  done
+  assert_contains "$out" $'  package.json (npm)\n    :test     npm run test'
+  assert_contains "$out" $'  justfile\n    :deploy   just deploy'
+  [[ $out == *':pretest'* ]] && fail "pretest runs with test"
+  [[ $out == *(':.PHONY'|':CC'|':%'|':alias'|':set'|':not')* ]] && fail "not tasks: $out"
+  # Asked the first time (no terminal: the answer is no).
+  axle run :test >/dev/null 2>&1 && fail "asked first"
+  [[ -e $T/ran ]] && fail "not run without a yes"
+  axle run :test -t api --yes >/dev/null 2>&1 || fail "with --yes"
+  axle run :test >/dev/null 2>&1 || fail "approved: not asked again"
+  axle run :all --yes >/dev/null 2>&1
+  axle run :deploy staging --yes >/dev/null 2>&1
+  assert_eq "$(<$T/ran)" "npm run test -- -t api
+npm run test
+make all
+just deploy staging" "the words after it (npm after --)"
+  axle run :fails --yes >/dev/null 2>&1; assert_eq $? 7 "its exit code"
+  out=$(axle run :tst 2>&1)
+  assert_contains "$out" "did you mean :test?"
+  mkdir -p $T/empty; print '<!doctype html>' > $T/empty/index.html; cd $T/empty
+  out=$(axle run : 2>&1)
+  assert_contains "$out" "no tasks in empty"
+  return 0
+}
+
+# What a service needs: a database from its .env that isn't answering, in the compose file,
+# is started first (and waited for); said ones each time; without a compose file, said.
+test_run_needs_started_first() {
+  AXLE_MODULES=(run) load_tool
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  local REPLY dbport port; free_port; dbport=$REPLY; port=$(( dbport + 1 ))
+  mkdir -p $T/bin $T/app
+  print -r -- "#!/bin/sh
+echo \"docker \$*\" >> $T/docker.log
+case \"\$*\" in *' up -d '*db*) $py $ROOT/tests/serve.py $dbport >/dev/null 2>&1 & echo \$! > $T/db.pid ;; esac
+exit 0" > $T/bin/docker
+  chmod +x $T/bin/docker
+  path=($T/bin $path)
+  print -r -- $'services:\n  api:\n    build: .\n  db:\n    image: postgres:16\n  cache:\n    image: redis:7' > $T/app/compose.yaml
+  print -r -- "DATABASE_URL=postgres://me:secret@localhost:$dbport/app" > $T/app/.env
+  print '<!doctype html>' > $T/app/index.html
+  cd $T/app
+  axle run set command $py $ROOT/tests/serve.py $port >/dev/null
+  axle run set kind service >/dev/null; axle run set port $port >/dev/null
+  axle run --yes > $T/out 2>&1
+  assert_contains "$(<$T/docker.log)" "docker compose -f compose.yaml up -d db"
+  assert_contains "$(<$T/out)" "what app needs: postgres :$dbport (db)"
+  _axle_run_port_up $dbport || fail "waited for it"
+  axle run stop >/dev/null 2>&1
+  # Up already: not started again.
+  : > $T/docker.log
+  axle run --yes > $T/out 2>&1
+  [[ -s $T/docker.log ]] && fail "running already: $(<$T/docker.log)"
+  axle run stop >/dev/null 2>&1
+  # Said: each time.
+  axle run set needs cache >/dev/null
+  axle run --yes > $T/out 2>&1
+  assert_contains "$(<$T/docker.log)" "docker compose -f compose.yaml up -d cache"
+  axle run stop >/dev/null 2>&1
+  axle run set needs 'bad;name' >/dev/null 2>&1 && fail "compose service names only"
+  # No compose service for it: said, and it runs anyway.
+  kill $(<$T/db.pid) 2>/dev/null                    # (the "database" the fake docker started)
+  rm $T/app/compose.yaml; axle run set needs >/dev/null
+  local -i i; for i in {1..20}; do _axle_run_port_up $dbport || break; sleep 0.1; done
+  axle run --yes > $T/out 2>&1
+  assert_contains "$(<$T/out)" "uses postgres on :$dbport, which isn't answering"
+  axle run stop >/dev/null 2>&1
+  return 0
+}
+
+# AXLE_RUN_NOTIFY: a notification when it's ready and when it crashes (from the supervisor,
+# with no shell watching); off by default; a name's odd characters never reach the program.
+test_run_notify() {
+  AXLE_MODULES=(run) load_tool
+  local REPLY port; free_port; port=$REPLY
+  web_project $port || return 0
+  export _AXLE_RUN_NOTIFY_TO=$T/notes
+  AXLE_RUN_NOTIFY=all _axle_run_start $T/web web
+  wait_state web up || return 0
+  local -i i
+  for i in {1..20}; do [[ -s $T/notes ]] && break; sleep 0.1; done
+  assert_eq "$(<$T/notes)" "axle run: web|up on http://localhost:$port" "ready"
+  axle run stop web >/dev/null
+  : > $T/notes
+  mkdir -p $T/bad; typeset -ga _axle_run_cmd=(sh -c 'exit 3'); typeset -g _axle_run_port=''
+  AXLE_RUN_NOTIFY=crash _axle_run_start $T/bad 'bad$(x)'
+  for i in {1..50}; do [[ -s $T/notes ]] && break; sleep 0.1; done
+  assert_eq "$(<$T/notes)" "axle run: bad(x) crashed|exit 3 - axle run logs bad(x)" "crashed, plain characters only"
+  axle run stop all >/dev/null 2>&1
+  : > $T/notes
+  _axle_run_start $T/bad quiet
+  sleep 1
+  [[ -s $T/notes ]] && fail "off by default: $(<$T/notes)"
+  unset _AXLE_RUN_NOTIFY_TO
+  axle run stop all >/dev/null 2>&1
+  return 0
+}
+
+# axle run env: each .env in order (a later one over an earlier), what axle run adds;
+# secrets masked (by name, and a URL's password) unless --show.
+test_run_env_shown() {
+  setopt localoptions extendedglob
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/api; cd $T/api
+  print 'from flask import Flask\napp = Flask(__name__)' > app.py; : > requirements.txt
+  print -r -- $'DATABASE_URL=postgres://me:hunter2@localhost:5432/app\nSECRET_KEY=abcdefabcdef\nDEBUG=1' > .env
+  print -r -- $'DEBUG=0\nAPI_TOKEN="t0k"' > .env.prod
+  axle run --profile prod -n >/dev/null 2>&1
+  local out=$(axle run env 2>&1); out=${out//$'\e'\[[0-9;]#m/}
+  assert_contains "$out" "profile prod"
+  assert_contains "$out" "postgres://me:••••@localhost:5432/app"
+  assert_contains "$out" "SECRET_KEY    •••••••• (12 characters)"
+  assert_contains "$out" "API_TOKEN     •••••••• (3 characters)"
+  assert_contains "$out" "DEBUG         0  (over .env)"
+  assert_contains "$out" "PORT          5000"
+  [[ $out == *(hunter2|abcdefabcdef|t0k)* ]] && fail "secrets shown: $out"
+  out=$(axle run env --show 2>&1)
+  assert_contains "$out" "hunter2"
+  assert_contains "$out" "abcdefabcdef"
+  return 0
+}
+
+# axle run set health /healthz: up once that path answers (not just the port), then checked
+# again and again: unhealthy after 3 failures, up again when it answers.
+test_run_health_checks() {
+  AXLE_MODULES=(run) load_tool
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  local REPLY port; free_port; port=$REPLY
+  mkdir -p $T/hs; print '<!doctype html>' > $T/hs/index.html
+  print 503 > $T/status
+  cd $T/hs
+  axle run set command $py $ROOT/tests/health.py $port $T/status >/dev/null
+  axle run set kind service >/dev/null; axle run set port $port >/dev/null
+  axle run set health /healthz >/dev/null
+  axle run set health 'no path' >/dev/null 2>&1 && fail "a path"
+  local d=$HOME/.local/state/axle/run/services/hs
+  export _AXLE_RUN_HEALTH_EVERY=1
+  axle run --yes >/dev/null 2>&1
+  local -i i
+  for i in {1..30}; do _axle_run_port_up $port && break; sleep 0.1; done
+  sleep 1
+  assert_eq "$(<$d/state)" starting "the port answers, /healthz doesn't: not up"
+  print 200 > $T/status
+  wait_state hs up || fail "up once /healthz answers"
+  print 500 > $T/status
+  wait_state hs unhealthy || fail "unhealthy after 3 failures"
+  assert_contains "$(<$HOME/.cache/axle/drops/run-hs)" "unhealthy"
+  assert_contains "$(axle run ls)" "unhealthy"
+  print 200 > $T/status
+  wait_state hs up || fail "up again"
+  unset _AXLE_RUN_HEALTH_EVERY
+  axle run stop >/dev/null 2>&1
+  return 0
+}
+
+# axle run group: projects added and taken out; started together (in the background), each
+# asked as axle run asks; stopped together.
+test_run_groups() {
+  AXLE_MODULES=(run) load_tool
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  local REPLY p1 p2; free_port; p1=$REPLY; p2=$(( p1 + 1 ))
+  mkdir -p $T/front $T/back
+  print '<!doctype html>' > $T/front/index.html; print '<!doctype html>' > $T/back/index.html
+  cd $T/front; axle run set command $py $ROOT/tests/serve.py $p1 >/dev/null; axle run set port $p1 >/dev/null; axle run set kind service >/dev/null
+  cd $T/back;  axle run set command $py $ROOT/tests/serve.py $p2 >/dev/null; axle run set port $p2 >/dev/null; axle run set kind service >/dev/null
+  cd $T/front
+  assert_contains "$(axle run group dev add)" "dev: front"
+  assert_contains "$(axle run group dev add $T/back)" "dev: front, back"
+  assert_contains "$(axle run group)" "front, back"
+  axle run group 'bad name' add >/dev/null 2>&1 && fail "a plain name"
+  cd $T
+  axle run group dev > $T/out 2>&1 || fail "started: $(<$T/out)"
+  wait_state front up || fail "front"
+  wait_state back up || fail "back"
+  assert_contains "$(axle run group dev stop)" "stopped back"
+  [[ -d $HOME/.local/state/axle/run/services/front ]] && fail "front stopped too"
+  assert_contains "$(axle run group dev rm $T/back)" "dev: front"
+  assert_contains "$(axle run group dev rm)" "dev: no more"
+  assert_contains "$(axle run group)" "no groups"
   return 0
 }
