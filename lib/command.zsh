@@ -4,12 +4,15 @@
 #
 #   axle_command <name> <function> <group: general|theme|tool> <usage> <description>
 
-# Both parts source this file; the second time it's already loaded (except on reload).
+# Both parts source this file; the second time it's already loaded (except on reload). A
+# shell still running a version before lazy loading has no _axle_lazy, and its `axle reload`
+# doesn't announce itself: that's a reload too, so its old functions get replaced as well.
+(( ${+_axle_cmd_fn} && ! ${+functions[_axle_lazy]} )) && typeset -gi _axle_reloading=1
 (( ${+_axle_cmd_fn} && ! ${_axle_reloading:-0} )) && return 0
 
 typeset -gA _axle_cmd_fn _axle_cmd_group _axle_cmd_usage _axle_cmd_desc
 typeset -g  AXLE_REPO=${AXLE_REPO:-https://github.com/hottahidit/axle}
-typeset -g  AXLE_VERSION=0.2.4
+typeset -g  AXLE_VERSION=0.3.0
 
 axle_command() {
   _axle_cmd_fn[$1]=$2 _axle_cmd_group[$1]=$3 _axle_cmd_usage[$1]=$4 _axle_cmd_desc[$1]=$5
@@ -17,6 +20,12 @@ axle_command() {
 
 zmodload zsh/datetime 2>/dev/null
 autoload -Uz add-zsh-hook
+
+# The tool's module names (reply): the glob expands first, then the names are cut from it.
+_axle_module_names() {
+  local -a files=($AXLE_ROOT/modules/*.zsh(N))
+  reply=(${files:t:r})
+}
 
 # Functions that load their file the first time they're called, so a shell only reads
 # what it uses (help pages, settings, completion, prompts, update, ...).
@@ -35,6 +44,8 @@ _axle_lazy_load() {
 }
 
 axle() {
+  # Axle's code needs these whatever your shell has set; yours come back afterwards.
+  setopt localoptions noglobsubst extendedglob
   local sub=${1:-help}
   if [[ $sub == (help|-h|--help) ]]; then
     if [[ -n $2 ]]; then _axle_help_one $2; else _axle_help; fi
@@ -57,41 +68,6 @@ axle() {
     print -u2 -r -- "axle: no command '$sub' (axle help lists them)"
   fi
   return 1
-}
-
-_axle_help() {
-  local group name title
-  local -A titles=(general 'axle' theme 'Benzene, the prompt' tool 'axle, the tool')
-  for group in general theme tool; do
-    local -a names=()
-    for name in ${(ok)_axle_cmd_group}; do
-      [[ $_axle_cmd_group[$name] == $group ]] && names+=($name)
-    done
-    (( ${#names} )) || continue
-    [[ $group == general ]] || { print; _axle_printp "%B${titles[$group]}%b" }
-    for name in $names; do
-      local usage=${_axle_cmd_usage[$name]:-$name}
-      if (( ${COLUMNS:-80} < 72 )); then     # narrow: the description on its own line
-        print -r -- "  axle $usage"
-        _axle_printp "      %F{${_axle_c[muted]:-244}}${_axle_cmd_desc[$name]//\%/%%}%f"
-      else
-        print -r -- "  axle ${(r:30:)usage} $_axle_cmd_desc[$name]"
-      fi
-    done
-  done
-  print
-  _axle_printp "%F{${_axle_c[muted]:-244}}axle help <command> for its options and examples; Tab completes everything.%f"
-  if (( ! ${_axle_tool_loaded:-0} )); then
-    print
-    print -r -- "More with the axle tool: smart suggestions, jump, history search, automatic"
-    if [[ -r $AXLE_ROOT/axle.plugin.zsh ]]; then
-      print -r -- "venvs, stats, doctor. It's installed: add axle to plugins=(...), or source axle.plugin.zsh."
-    elif [[ -e $AXLE_ROOT/.git ]]; then
-      print -r -- "venvs, stats, doctor. Run $AXLE_ROOT/install.sh again and choose it."
-    else
-      print -r -- "venvs, stats, doctor. Get it with a fresh copy of Axle: $AXLE_REPO"
-    fi
-  fi
 }
 
 # Settings saved by `axle configure` (after ~/.zshrc, so they win). Both parts read it.
@@ -178,9 +154,11 @@ _axle_lazy lib/update.zsh   _axle_cmd_update _axle_cmd_uninstall _axle_update_st
                             _axle_update_changes _axle_update_checkout_ok
 _axle_lazy lib/ui.zsh       axle_select axle_checkbox axle_confirm axle_input _axle_ui_key \
                             _axle_ui_tty _axle_ui_draw _axle_ui_done _axle_ui_fit
-_axle_lazy lib/help.zsh     _axle_help_one _axle_did_you_mean _axle_distance
+_axle_lazy lib/help.zsh     _axle_help _axle_help_one _axle_did_you_mean _axle_distance
 _axle_lazy lib/settings.zsh _axle_cmd_config _axle_setting _axle_config_value _axle_config_write
 _axle_lazy lib/complete.zsh _axle_complete
+_axle_lazy lib/project.zsh  _axle_scan_markers _axle_has_marker _axle_venv_in _axle_venv_find \
+                            _axle_project_root
 
 # --- compiled files ---------------------------------------------------------------
 
@@ -192,13 +170,13 @@ _axle_compile() {
   local -a stale=()
   # Bytecode only works with the zsh version that made it: after a zsh upgrade, redo all.
   [[ -r $AXLE_ROOT/.zwc-version ]] && read -r built < $AXLE_ROOT/.zwc-version
-  [[ $built == $ZSH_VERSION ]] || rm -f -- $AXLE_ROOT/{*,{lib,core,modules,benzene}/*}.zwc(N)
+  [[ $built == $ZSH_VERSION ]] || rm -f -- $AXLE_ROOT/{*,{lib,core,modules,modules/*,benzene}/*}.zwc(N)
   for f in $AXLE_ROOT/{axle.plugin.zsh,benzene.zsh-theme,axle.zsh-theme} \
-           $AXLE_ROOT/{lib,core,modules,benzene}/*.zsh(N); do
+           $AXLE_ROOT/{lib,core,modules,modules/*,benzene}/*.zsh(N); do
     [[ -f $f && ! $f.zwc -nt $f ]] && stale+=($f)
   done
   # Bytecode whose source is gone (install.sh removed that part): zsh would still run it.
-  for f in $AXLE_ROOT/{*,{lib,core,modules,benzene}/*}.zwc(N); do
+  for f in $AXLE_ROOT/{*,{lib,core,modules,modules/*,benzene}/*}.zwc(N); do
     [[ -e ${f%.zwc} ]] || rm -f -- $f
   done
   (( ${#stale} )) && [[ -w $AXLE_ROOT ]] || return 0

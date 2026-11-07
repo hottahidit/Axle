@@ -29,6 +29,7 @@ _cf_recount() {
     (( _cf_total += 1 ))                          # which modules
     (( ${mods[(Ie)suggest]} )) && (( _cf_total += 1 ))
     (( ${mods[(Ie)env]} )) && (( _cf_total += 1 ))
+    (( ${mods[(Ie)run]} )) && (( _cf_total += 2 ))
   fi
 }
 
@@ -200,14 +201,15 @@ _cf_theme_steps() {
 }
 
 _cf_tool_steps() {
-  _cf_toggle "Which axle modules?" modules "${AXLE_MODULES:-suggest highlight upsearch jump search env fix}" \
+  _cf_toggle "Which axle modules?" modules "${AXLE_MODULES:-suggest highlight upsearch jump search env fix run}" \
     "suggest:grey suggestions as you type (Ctrl-N lists the alternatives)" \
     "highlight:syntax highlighting: green commands, red typos, coloured strings and options" \
     "upsearch:type part of a command, then ↑/↓ walks through history lines with it" \
     "jump:j <words> goes to the folder you most likely mean" \
     "search:Ctrl-R opens a history picker with filters" \
     "env:switches a project's venv on and off as you cd in and out" \
-    "fix:fix (or Esc Esc) corrects the last command: typos, missing sudo"
+    "fix:fix (or Esc Esc) corrects the last command: typos, missing sudo" \
+    "run:axle run runs this project (servers in the background, in the prompt), or the last one"
   _cf_recount
   local -a mods=(${=_cf[modules]})
 
@@ -220,6 +222,14 @@ _cf_tool_steps() {
     _cf_note='For example: "axle: using the shop-api venv".'
     _cf_ask "When a venv is switched automatically…" env_quiet ${AXLE_ENV_QUIET:-0} \
       "Say so in one line:0" "Stay silent:1"
+  fi
+  if (( ${mods[(Ie)run]} )); then
+    _cf_note='Servers run in the background and show in the prompt: ⚡ shop :8000.'
+    _cf_ask "When their terminal closes, axle run's servers…" run_on_exit ${AXLE_RUN_ON_EXIT:-keep} \
+      "Keep running (axle run stop ends them):keep" "Stop with it:stop"
+    _cf_note='From the server itself, so it works with no terminal open.'
+    _cf_ask "A desktop notification when a server…" run_notify ${AXLE_RUN_NOTIFY:-off} \
+      "Never:off" "Crashes:crash" "Crashes, or is ready:all"
   fi
 }
 
@@ -242,10 +252,12 @@ _cf_write() {
     fi
   fi
   if (( _cf_tool )); then
-    keys+=(AXLE_MODULES AXLE_SUGGEST AXLE_SUGGEST_LIST AXLE_ENV_QUIET)
+    keys+=(AXLE_MODULES AXLE_SUGGEST AXLE_SUGGEST_LIST AXLE_ENV_QUIET AXLE_RUN_ON_EXIT AXLE_RUN_NOTIFY)
     ours+=("# axle" "AXLE_MODULES=($_cf[modules])")
     [[ -n $_cf[suggest_list] ]] && ours+=("AXLE_SUGGEST_LIST=$_cf[suggest_list]")
     [[ -n $_cf[env_quiet] ]] && ours+=("AXLE_ENV_QUIET=$_cf[env_quiet]")
+    [[ -n $_cf[run_on_exit] ]] && ours+=("AXLE_RUN_ON_EXIT=$_cf[run_on_exit]")
+    [[ -n $_cf[run_notify] ]] && ours+=("AXLE_RUN_NOTIFY=$_cf[run_notify]")
   fi
   # Keep everything else already in the file (settings for the other part, your edits).
   local -a kept=() line

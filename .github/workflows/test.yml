@@ -13,6 +13,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0        # the release tags: tests reload from earlier versions
       - name: Install zsh
         if: runner.os == 'Linux'
         run: sudo apt-get update -q && sudo apt-get install -y -q zsh
@@ -20,3 +22,29 @@ jobs:
         run: zsh --version && git --version
       - name: Run the tests
         run: zsh tests/run.zsh
+
+  # Axle's btop (vendor/btop, with the Axle mode): it builds, and has its options.
+  btop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install zsh and a C++23 compiler
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get update -q && sudo apt-get install -y -q zsh g++-14
+          else
+            brew install coreutils make gcc@15
+          fi
+      - name: Build Axle's btop
+        run: zsh tools/axle-build-btop
+      - name: Its Axle options
+        run: |
+          vendor/btop/bin/btop --version
+          vendor/btop/bin/btop --help | grep -- --axle-dir
+          vendor/btop/bin/btop --help | grep -- --axle-only
+      - name: The tests, with it built
+        run: zsh tests/run.zsh tool

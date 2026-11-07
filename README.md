@@ -1,7 +1,8 @@
 # Axle
 
 **Axle** is a toolkit for zsh: smart suggestions as you type, `j` to jump to the folder you mean,
-a Ctrl-R history picker, automatic virtualenvs, command stats, a health check, and hooks and
+a Ctrl-R history picker, automatic virtualenvs, `axle run` to run any project (servers in the
+background, in the prompt), command stats, a health check, and hooks and
 "drops" to build your own. It comes with **Benzene**, a prompt theme whose two variants, NoxA and
 AxoN, are the two halves of one ring (like the benzene molecule, it reads the same from both ends).
 
@@ -29,6 +30,7 @@ prompt. Together, each makes the other better.
   - [jump](#jump)
   - [search](#search)
   - [env](#env)
+  - [run](#run)
   - [history, stats, doctor, update](#history-stats-doctor-update)
   - [Extending: segments, hooks, drops](#extending-segments-hooks-drops)
 - [Project](#project)
@@ -504,7 +506,7 @@ axle variant nox    # switch back to NoxA
 
 # axle, the tool
 
-Modules (all on by default; switch them in `axle configure`, or with `axle module off <name>`):
+Modules (all but `run` on by default; switch them in `axle configure`, or with `axle module off <name>`):
 
 | Module | Does | Like |
 |---|---|---|
@@ -515,6 +517,7 @@ Modules (all on by default; switch them in `axle configure`, or with `axle modul
 | `search` | Ctrl-R: a history picker with filters | atuin, fzf's Ctrl-R |
 | `env` | activates a project's venv when you enter it, deactivates when you leave | direnv, autoenv |
 | `fix` | `fix` / Esc Esc: corrects the last command (typos, missing sudo) | thefuck, oh-my-zsh's sudo |
+| `run` | `axle run`: runs this project (servers in the background, in the prompt), or the last one; off by default | foreman, overmind, npm run |
 
 All of them learn from one history log the tool keeps: every command with where it ran, its
 exit code, run time and the command before it (`~/.local/share/axle/history`; lines typed with a
@@ -655,9 +658,63 @@ and the size.
 When you `cd` into a project with its own virtualenv (`.venv`, `venv`, `env`), it's activated; when
 you leave, or enter a project with a different one, it's switched or deactivated, with one quiet
 line saying so (`AXLE_ENV_QUIET=1` silences it). A venv you activated yourself is left alone.
+`deactivate` turns it off as usual; it stays off until you leave the project.
 
 It never runs the venv's `activate` script, which a cloned repository could ship with anything in
 it: it sets `VIRTUAL_ENV` and puts the venv's `bin/` first on `PATH`, and undoes exactly that.
+
+## run
+
+`axle run` works out how to run the project you're in, and runs it. Elsewhere, it takes you back
+to the last project you worked in (from the history log) and offers to run that; `axle run shop`
+picks the project `j` would pick. Servers run **in the background** and show in the prompt as a
+tab (`⏳ shop` while starting, `⚡ shop :8000` when up, Ctrl+click opens it, red if it crashes);
+scripts and CLIs run **in the foreground**. It's off until you switch it on (`axle configure`,
+or `axle module on run`).
+
+```zsh
+axle run --dry-run       # what would run, and why; runs nothing
+axle run                 # shows the command and asks, the first time
+axle run ls              # what's running: state, port, uptime, memory, URL (--json too)
+axle run logs [-f]       # its output; `logs all -f`: every service's, each line after its name
+axle run stop · restart · open
+axle run top             # the services live (Axle's btop, in its Axle mode)
+axle run :test -k api    # the project's own tasks, the same words everywhere (`axle run :` lists them)
+axle run exec python manage.py migrate   # a command with exactly what the server gets
+axle help run            # everything
+```
+
+**How it knows.** From the files, read as text: docker compose, a Procfile (or Procfile.dev),
+package.json scripts (npm, pnpm, yarn, bun; Vite, Next, Nuxt, Astro, ...), FastAPI, Flask, Django,
+Streamlit and other Python apps, pyproject scripts, Cargo, Go, a Makefile or justfile, or a
+static `index.html`, in the project's venv. A project with several parts (a frontend and an API,
+workspaces, `apps/*`, a Procfile's `worker:`) asks once which to start. A taken port is said with
+who has it, and you choose: the next free port, stopping the other, or cancel. A second git
+worktree of a project runs as `shop@feature-x`, on the next port.
+
+**Nothing runs unseen.** The first time a project's command runs, it's shown and you're asked;
+when it changes (a `git pull` edits the script), you're asked again, and `axle run restart` won't
+run a changed one. `.env` files are read as data and never sourced (and can't set `PATH` or
+`LD_PRELOAD`), a venv's `activate` never runs, and without a terminal nothing is asked: an
+unapproved command doesn't run.
+
+**Your settings**, per project, kept in Axle's state, not in the project: `axle run set port
+8080` (also `command`, `kind`, `env-file`, `restart on-crash`, `needs db`, `health /healthz`),
+`--profile prod` for `.env.prod`, `axle run forget` to drop them.
+
+**Looking after them.** A crash says why when it's a known cause (a missing package, no venv, a
+taken port, a database not started), and puts the fix on the command line (Esc Esc). Restart on
+crash, logs kept under 10 MB, health checks, desktop notifications (`AXLE_RUN_NOTIFY`), a
+database from `.env` started first from the compose file, a restart when `.env` changes, and
+groups of projects started together (`axle run group dev`). Servers keep running when the
+terminal closes (`AXLE_RUN_ON_EXIT=stop` ends them with it).
+
+**From scripts and editors.** `bin/axle` runs any `axle` command from bash, fish, a Makefile, CI
+or an editor task; `axle run ls --json` for status bars and scripts; `-q` for less to read;
+output into a pipe has no colours, and `NO_COLOR` is honoured.
+
+`axle run` began as [Legionary](https://github.com/hottahidit/Legionary), an earlier idea for a
+project launcher that never got past its README; this is that idea, grown up inside Axle.
 
 ## history, stats, doctor, update
 
@@ -667,6 +724,9 @@ it: it sets `VIRTUAL_ENV` and puts the venv's `bin/` first on `PATH`, and undoes
 - `axle doctor`: checks zsh and git versions, what's loaded, plugin conflicts, 24-bit colour,
   Nerd Font, tmux, the history file, config overrides and how fast the prompt draws, with a fix
   for anything that's off.
+- `axle top`: the system live, with btop. Axle carries btop 1.4.8 with an Axle mode (key `A`:
+  only what `axle run` started); `install.sh` offers to build it (`axle top --build` later; needs
+  g++ 14+ or clang 19+), otherwise an installed btop runs.
 - `axle update`: `git pull` in the Axle checkout, then reload.
 
 ## Extending: segments, hooks, drops
@@ -771,6 +831,10 @@ zsh itself is the rest: on WSL a bare interactive zsh takes far longer to start 
 [MIT](LICENSE): use, modify, fork and share Axle and Benzene freely, including in commercial
 projects, as long as the copyright and licence notice come along.
 
+`vendor/btop` is [btop](https://github.com/aristocratos/btop) by Aristocratos, under its
+own [Apache License 2.0](vendor/btop/LICENSE), with Axle's changes listed in
+[vendor/btop/AXLE.md](vendor/btop/AXLE.md).
+
 ## Layout
 
 ```
@@ -783,8 +847,12 @@ lib/                   shared by both: the `axle` command, help, settings, Tab c
 benzene/               the prompt: nox.zsh, axon.zsh, more.zsh (more segments),
                        segments.zsh (yours + drops), aistatus.zsh, preview.zsh, tmux.conf
 core/                  the tool's core: events.zsh (events, hooks, history log), commands.zsh
-modules/               the tool's modules: suggest, highlight, upsearch, jump, search, env, fix
+modules/               the tool's modules: suggest, highlight, upsearch, jump, search, env, fix,
+                       run (modules/run/: detection, services, ports, parts, settings, tasks...)
+bin/axle               the axle command for scripts, editors and other shells
 tools/axle-drop        put a tab in the prompt from any program
+tools/axle-build-btop  builds vendor/btop (Axle's btop, for axle top / axle run top)
+vendor/btop            btop 1.4.8 (Apache-2.0) with an Axle mode
 tests/                 the test suite (zsh tests/run.zsh)
 .github/workflows/     CI: the tests on Linux and macOS
 CHANGELOG.md           what changed in each version

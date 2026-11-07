@@ -66,6 +66,8 @@ typeset -gA _axle_settings=(
   AXLE_UPSEARCH_CASE    'tool|bool|0|↑/↓ search is case-sensitive'
   AXLE_UPSEARCH_STYLE   'tool|text||how the match looks (region_highlight)'
   AXLE_FIX_CMD          'tool|text|fix|the command that corrects the last one (empty: none)'
+  AXLE_FIX_NOTFOUND     'tool|bool|1|say "no such command" in Axle'"'"'s style, with the closest one you could have meant'
+  AXLE_FIX_PARSE        'tool|bool|1|on Enter, say why a line can'"'"'t be read (zsh'"'"'s parse error) and keep it to fix'
   AXLE_FIX_KEY          'tool|text|^[^[|key that corrects / toggles sudo (empty: none)'
   AXLE_SUGGEST          'tool|bool|1|suggestions as you type'
   AXLE_SUGGEST_STRATEGY 'tool|list|smart history completion|where suggestions come from, in order'
@@ -78,6 +80,16 @@ typeset -gA _axle_settings=(
   AXLE_SEARCH_KEY       'tool|text|^R|key for the history picker'
   AXLE_SEARCH_ROWS      'tool|int|10|rows in the history picker'
   AXLE_ENV_QUIET        'tool|bool|0|switch venvs without saying so'
+  AXLE_RUN_VENV         'tool|choice:ask,project,active|ask|axle run, when another venv is active: ask, or use the project'"'"'s or the active one'
+  AXLE_RUN_ON_EXIT      'tool|choice:keep,stop|keep|axle run'"'"'s services when their terminal closes: keep running, or stop'
+  AXLE_RUN_OPEN         'tool|bool|0|axle run: open the browser when a service is ready'
+  AXLE_RUN_UNIVENV      'tool|text||axle run deps: folders whose Python projects share one venv (folder/.venv), e.g. ~/Projects'
+  AXLE_RUN_RESTART      'tool|choice:no,on-crash|no|axle run: start a service again after it crashes (waiting 1, 2, 4... s; not after 5 quick crashes)'
+  AXLE_RUN_LOG_MAX      'tool|text|10M|axle run: a service'"'"'s log is cut to log.1 past this size (e.g. 10M, 500K; 0: no limit)'
+  AXLE_RUN_NOTIFY       'tool|choice:off,crash,ready,all|off|axle run: a desktop notification when a service crashes, is ready, or both'
+  AXLE_RUN_TRUST        'tool|choice:ask,always|ask|axle run: ask before a project'"'"'s command runs the first time (always: never ask)'
+  AXLE_RUN_ENV_RELOAD   'tool|bool|1|axle run: start a service again when its .env files change'
+  AXLE_RUN_QUIET        'tool|bool|0|axle run: quiet, no ▶ lines or hints, just what happened (or -q)'
 )
 
 # The setting's fields: reply=(part kind default description).
@@ -152,7 +164,7 @@ _axle_config_list() {
       kind=$reply[2] def=$reply[3] desc=$reply[4]
       _axle_config_value $name; value=$REPLY
       if (( ${+saved[$name]} )); then src="%F{$a}saved%f"
-      elif [[ $kind != list && -n $value && $value != $def ]]; then src="%F{$m}~/.zshrc%f"
+      elif [[ $kind != list && -n $value && $value != "$def" ]]; then src="%F{$m}~/.zshrc%f"
       else src="%F{$m}default%f"; fi
       (( ${#value} > 34 )) && value="${value[1,33]}…"
       [[ -n $value ]] || value='–'

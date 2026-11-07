@@ -88,6 +88,16 @@ test_arrow_key_prompts() {
   zpty -w sh "axle config set AXLE_VARIANT; : > $T/done2"
   sleep 0.5; zpty -n -w sh $'\e'; _pty_wait_file $T/done2
   assert_not_match "$(<$cfg)" "*AXLE_VARIANT*" "Esc saves nothing"
+  # So does Ctrl-C, at once (it once only printed ✗ and kept waiting).
+  zpty -w sh "axle config set AXLE_VARIANT; : > $T/done3"
+  local seen='' chunk; local -i i
+  for i in {1..100}; do                          # (a Ctrl-C before the question would
+    while zpty -rt sh chunk 2>/dev/null; do seen+=$chunk; done   # cancel the whole line)
+    [[ $seen == *Esc\ cancel* ]] && break
+    sleep 0.1
+  done
+  zpty -n -w sh $'\x03'; _pty_wait_file $T/done3
+  assert_not_match "$(<$cfg)" "*AXLE_VARIANT*" "Ctrl-C saves nothing"
   zpty -w sh 'exit'; zpty -d sh 2>/dev/null
 }
 

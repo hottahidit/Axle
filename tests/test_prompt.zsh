@@ -50,6 +50,26 @@ test_top_line_fills_width_exactly() {
   assert_eq ${(m)#REPLY} 99 "visible width of the expanded top line"
 }
 
+# Another tool's text before Benzene in PROMPT (nemc's light, conda's "(base) ") is
+# counted, so the right side still ends at the edge instead of being cut off.
+test_top_line_counts_text_before_it() {
+  _setup
+  cd ~
+  typeset -g LIGHT='%F{yellow}●%f ' X=0
+  PROMPT='${LIGHT}(base) '$PROMPT
+  COLUMNS=100 _axle_detail=1 _axle_last_status=(1) _axle_elapsed=3
+  _axle_render
+  plain "$_axle_ps1"
+  local top=${REPLY%%$'\n'*}
+  assert_eq ${(m)#top} 90 "visible width after the 9 columns before it"
+  local bottom=${REPLY#*$'\n'}
+  assert_eq "${bottom[1,10]}" "         ╰" "the bottom line moves over, so ╰─ is under ╭─"
+  # Nothing in the text before runs while measuring it.
+  PROMPT='$(( X = 1 ))'$PROMPT
+  _axle_render
+  assert_eq $X 0 "the text before wasn't run"
+}
+
 test_axon_layout() {
   AXLE_VARIANT=axon load_theme
   _axle_read_mem() { _axle_mem_used=40 }

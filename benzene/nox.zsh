@@ -381,34 +381,7 @@ _axle_version() {
   REPLY=${_axle_vcache[$key]}
 }
 
-# Find project marker files from $PWD up to $HOME (or /), nearest directory wins.
-# One glob (a single readdir) per level keeps this cheap even on slow filesystems.
-_axle_scan_markers() {
-  _axle_markers=()
-  local dir=$PWD f
-  local -a hits
-  while :; do
-    hits=($dir/(package.json|.nvmrc|.node-version|pyproject.toml|requirements.txt|setup.py|Pipfile|.python-version|go.mod|Cargo.toml|.terraform|flake.nix|shell.nix|.git|.tool-versions|rust-toolchain|rust-toolchain.toml|${~_axle_more_markers})(N))
-    for f in ${hits:t}; do
-      (( ${+_axle_markers[$f]} )) || _axle_markers[$f]=$dir
-    done
-    # A project's own virtualenv (the nearest one up the tree). One directly in ~ or /
-    # is a general-purpose venv, not a project's, so it doesn't count.
-    if (( ! ${+_axle_markers[venv]} )) && [[ $dir != $HOME && $dir != / ]]; then
-      hits=($dir/(.venv|venv|env|.env)/pyvenv.cfg(N))
-      (( ${#hits} )) && _axle_markers[venv]=${hits[1]:h}
-    fi
-    [[ $dir == / || $dir == $HOME ]] && break
-    dir=${dir:h}
-  done
-}
-
-# Return 0 if any of the given marker files was found by _axle_scan_markers.
-_axle_has_marker() {
-  local f
-  for f; do (( ${+_axle_markers[$f]} )) && return 0; done
-  return 1
-}
+# _axle_scan_markers and _axle_has_marker (project markers) are in lib/project.zsh.
 
 # Read a file only when its mtime changed: _axle_cached <key> <file> <command...>.
 # The command gets the file as its last argument; its stdout is cached.
@@ -1081,15 +1054,17 @@ _axle_sudo_check() {
 # only armed while a live segment needs it, and wakes only when the text changes.
 
 _axle_timer_stop() {
+  _axle_timer_at=0
   [[ -n $_axle_timer_fd ]] || return
   zle -F $_axle_timer_fd 2>/dev/null
   exec {_axle_timer_fd}<&-
   _axle_timer_fd=''
 }
 
+typeset -gF _axle_timer_at=0                # when the running timer rings (0: none)
+
 _axle_timer_arm() {
-  _axle_timer_stop
-  (( $+builtins[zle] )) || return
+  (( $+builtins[zle] )) || { _axle_timer_stop; return }
   local -F delay=0
   local -i left=$(( _axle_sudo_until - EPOCHSECONDS ))
   if (( _axle_sudo_until > 0 && left > 0 )); then
@@ -1108,11 +1083,24 @@ _axle_timer_arm() {
     (( delay == 0 || tick < delay )) && delay=$tick
   fi
   # Drops (benzene/segments.zsh): look for changes every few seconds.
+  # (On whole multiples of the period, like the clock: prompts in a row agree on the time,
+  # so the timer running already is kept.)
   if (( $+functions[_axle_drop_poll] )); then
     _axle_drop_poll
-    (( REPLY > 0 && (delay == 0 || REPLY < delay) )) && delay=$REPLY
+    if (( REPLY > 0 )); then
+      local -F poll=$(( REPLY - EPOCHREALTIME % REPLY + 0.01 ))
+      (( delay == 0 || poll < delay )) && delay=$poll
+    fi
   fi
-  (( delay > 0 )) || return
+  (( delay > 0 )) || { _axle_timer_stop; return }
+  # The timer running already rings then (the next minute, mostly): keep it. A new one is a
+  # new process each prompt, and the old one's sleep would linger until its time anyway.
+  local -F at=$(( EPOCHREALTIME + delay ))
+  if [[ -n $_axle_timer_fd ]] && (( at - _axle_timer_at < 0.05 && _axle_timer_at - at < 0.05 )); then
+    return
+  fi
+  _axle_timer_stop
+  _axle_timer_at=$at
   exec {_axle_timer_fd}< <(command sleep $delay; print)
   zle -F -w $_axle_timer_fd _axle_timer_tick
 }
@@ -1188,6 +1176,7 @@ _axle_join() {
 }
 
 _axle_render() {
+  setopt localoptions noglobsubst extendedglob
   # The frame and arrow are one piece (╭─ … ╰─➜) in one colour: the accent, deep red
   # under memory pressure, red after a failure (a failure wins).
   local char=$AXLE_PROMPT_CHAR colour=$_axle_c[accent]
@@ -1243,8 +1232,17 @@ _axle_layout() {
   [[ -n $_axle_bottom ]] || return 0    # one-line layouts set _axle_ps1 themselves
   local -i cols=${COLUMNS:-80}
   (( cols > 0 )) || cols=80
+  # Something another tool put before Benzene in PROMPT (conda's "(base) ", nemc's light)
+  # takes columns from the top line, and pushes ╭─ out of line with ╰─. It's measured as it is now: only its variables are
+  # read, and nothing in it runs (one with $(…) or `…` isn't measured).
+  local -i pre=0
+  local before=${PROMPT%%'%{${_axle_mark_a}%}'*}
+  if [[ -n $before && $before != $PROMPT && $before != *('$('|'`')* ]]; then
+    before=${(e)before}
+    _axle_width ${before##*$'\n'}; pre=$REPLY
+  fi
   # -1: writing the last column would make some terminals wrap early.
-  local -i gap=$(( cols - _axle_top_lw - _axle_top_rw - 1 ))
+  local -i gap=$(( cols - pre - _axle_top_lw - _axle_top_rw - 1 ))
   local top=$_axle_top_l
   if [[ -n $_axle_top_r ]]; then
     if (( gap >= 2 )); then
@@ -1256,7 +1254,8 @@ _axle_layout() {
   # The top line can never wrap: auto-wrap (DECAWM) is off while it's drawn, so if a
   # terminal draws some glyph wider than computed, the line is clipped at the edge
   # instead of spilling onto a new line. It's back on before the input line.
-  _axle_ps1="%{"$'\e[?7l'"%}$top%{"$'\e[?7h'"%}"$'\n'"$_axle_bottom"
+  # The bottom line moves over by as much, so ╰─ stays under ╭─.
+  _axle_ps1="%{"$'\e[?7l'"%}$top%{"$'\e[?7h'"%}"$'\n'"${(l:pre:):-}$_axle_bottom"
   return 0
 }
 functions -M axle_layout 0 0 _axle_layout

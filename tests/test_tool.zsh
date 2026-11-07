@@ -166,3 +166,39 @@ test_suggest_list_opens_on_demand() {
   assert_eq "$post[3]" '[ha-two]' "typing closes it"
   assert_eq "$post[4]" '[]' "nothing on a history line"
 }
+
+# axle top runs Axle's btop (with axle run's services folder for its Axle mode), else an
+# installed btop, else says how to get one (127). Axle's btop, when built, has its options.
+test_top_runs_btop() {
+  setopt localoptions extendedglob
+  load_tool
+  mkdir -p $T/bin $T/empty $T/vendor
+  print -r -- '#!/bin/sh
+echo "btop $*" > "'$T'/btop.ran"' > $T/bin/btop
+  cp $T/bin/btop $T/vendor/btop
+  chmod +x $T/bin/btop $T/vendor/btop
+  local -a saved=($path)
+  typeset -g _axle_top_bin=$T/vendor/btop
+  axle top -p 1 >/dev/null 2>&1
+  assert_eq "$(<$T/btop.ran)" "btop --axle-dir ${XDG_STATE_HOME:-$HOME/.local/state}/axle/run/services -p 1" "Axle's btop"
+  _axle_top_bin=$T/not-built
+  path=($T/bin $saved)
+  axle top -p 1 >/dev/null 2>&1
+  assert_eq "$(<$T/btop.ran)" "btop -p 1" "an installed btop"
+  path=($T/empty)
+  local out; out=$(axle top 2>&1); local -i st=$?
+  path=($saved)
+  unset _axle_top_bin
+  assert_eq $st 127 "neither"
+  out=${out//$'\e'\[[0-9;]#m/}
+  assert_contains "$out" "axle top runs btop, and there's none here"
+  assert_contains "$out" "axle top --build"
+  # Built (CI's btop job builds it): its Axle options.
+  local built=$ROOT/vendor/btop/bin/btop
+  if [[ -x $built ]]; then
+    out=$($built --help 2>&1)
+    assert_contains "$out" "--axle-dir"
+    assert_contains "$out" "--axle-only"
+  fi
+  return 0
+}

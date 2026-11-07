@@ -91,6 +91,7 @@ _axle_segment_cmd() {
 # AXLE_DROP_MAX ok/info drops while collapsed (all when expanded), the rest as "+N".
 #   _axle_seg_drops [urgent]   only alarm/warn drops (AxoN)
 _axle_seg_drops() {
+  setopt localoptions noglobsubst extendedglob
   local -a files=($_axle_drop_dir/[^.]*(N.))
   (( ${#files} )) || return
   local f line key value sep=" %F{${_axle_c[sep]:-238}}${AXLE_SEP:-│}%f "

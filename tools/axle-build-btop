@@ -1,0 +1,88 @@
+#!/usr/bin/env zsh
+# Build Axle's btop: btop 1.4.8 (vendor/btop, Apache-2.0, by Aristocratos) with the Axle
+# mode added, into vendor/btop/bin/btop. `axle top` runs it (key A: only the processes
+# `axle run` started), and `axle run top` opens it in that mode.
+#
+#   tools/axle-build-btop            build (about a minute)
+#   tools/axle-build-btop --check    only say whether it can be built here
+#
+# btop 1.4 is C++23: it needs GNU make and g++ 14+ or clang 19+ (Apple's clang 17+); on
+# macOS, Homebrew's coreutils, make and gcc@15. Without them, this says what to install,
+# and changes nothing.
+emulate -L zsh
+setopt no_nomatch
+
+root=${0:A:h:h}
+src=$root/vendor/btop
+check=0
+[[ $1 == --check ]] && check=1
+
+# A compiler new enough for btop (CXX), else status 1.
+pick_cxx() {
+  local c v major
+  for c in g++-16 g++-15 g++-14 clang++-21 clang++-20 clang++-19 \
+           /opt/homebrew/opt/llvm/bin/clang++ /usr/local/opt/llvm/bin/clang++ g++ clang++ c++; do
+    [[ $c == /* ]] && [[ ! -x $c ]] && continue
+    [[ $c != /* ]] && ! (( $+commands[$c] )) && continue
+    v=$(command $c --version 2>/dev/null | head -1)
+    major=$(command $c -dumpversion 2>/dev/null); major=${major%%.*}
+    [[ $major == <-> ]] || continue
+    if [[ $v == *Apple* ]]; then (( major >= 17 )) || continue
+    elif [[ $v == *clang* ]]; then (( major >= 19 )) || continue
+    else (( major >= 14 )) || continue
+    fi
+    REPLY=$c
+    return 0
+  done
+  return 1
+}
+
+# What to install for a compiler, here.
+how_cxx() {
+  if [[ $OSTYPE == darwin* ]]; then REPLY='brew install coreutils make gcc@15'
+  elif (( $+commands[apt] )); then REPLY='sudo apt install g++-14'
+  elif (( $+commands[dnf] )); then REPLY='sudo dnf install gcc-c++   (Fedora 40 or newer)'
+  elif (( $+commands[pacman] )); then REPLY='sudo pacman -S gcc'
+  elif (( $+commands[zypper] )); then REPLY='sudo zypper install gcc14-c++'
+  elif (( $+commands[apk] )); then REPLY='sudo apk add g++'
+  else REPLY='g++ 14 or newer, or clang 19 or newer'
+  fi
+}
+
+if [[ ! -r $src/Makefile ]]; then
+  print -u2 "axle-build-btop: btop's source isn't here ($src)"
+  exit 1
+fi
+# GNU make (on macOS: Homebrew's gmake; the system's make is too old for btop).
+mk=make
+(( $+commands[gmake] )) && mk=gmake
+if ! (( $+commands[$mk] )) || [[ $OSTYPE == darwin* && $mk != gmake ]]; then
+  how_cxx
+  print -u2 "axle-build-btop: building btop needs GNU make ($REPLY)"
+  exit 1
+fi
+if ! pick_cxx; then
+  how_cxx
+  print -u2 "axle-build-btop: btop 1.4 needs g++ 14+ or clang 19+, and there's none here."
+  print -u2 "  Install one ($REPLY), then run: axle top --build"
+  exit 1
+fi
+cxx=$REPLY
+if (( check )); then
+  print "can build Axle's btop with $cxx"
+  exit 0
+fi
+
+local -i jobs=$(command nproc 2>/dev/null || command sysctl -n hw.ncpu 2>/dev/null || print 2)
+log=${XDG_CACHE_HOME:-$HOME/.cache}/axle/btop-build.log
+command mkdir -p -- ${log:h}
+print "Building Axle's btop with $cxx ($jobs at a time; about a minute)..."
+zmodload zsh/datetime 2>/dev/null
+local -i start=$EPOCHSECONDS
+if command $mk -C $src -j$jobs CXX=$cxx >| $log 2>&1 && [[ -x $src/bin/btop ]]; then
+  print "Built: ${src/#$HOME/~}/bin/btop ($(( EPOCHSECONDS - start ))s). Try: axle top"
+else
+  print -u2 "axle-build-btop: the build failed. The end of its log (${log/#$HOME/~}):"
+  command tail -n 15 -- $log | sed 's/^/  /' >&2
+  exit 1
+fi

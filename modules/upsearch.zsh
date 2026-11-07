@@ -1,7 +1,8 @@
 # ↑/↓ search history for what you've typed, in the spirit of zsh-history-substring-search:
 # type part of a command (`docker`, `push`, `ssh nas`), then ↑ walks back through only the
 # history lines that contain it, with the match highlighted; ↓ walks forward, and past the
-# newest brings back what you typed. On an empty line ↑/↓ work as usual.
+# newest brings back what you typed. From an empty line ↑/↓ are the usual history, all the
+# way through; editing a line you got that way makes it what you've typed.
 #
 #   AXLE_UPSEARCH=1           0 = off
 #   AXLE_UPSEARCH_PREFIX=0    1 = only lines that start with what you typed
@@ -14,7 +15,7 @@
 
 typeset -g  _axle_us_query='' _axle_us_last=''
 typeset -ga _axle_us_hits
-typeset -gi _axle_us_at=0
+typeset -gi _axle_us_at=0 _axle_us_plain=0     # plain: browsing, started from an empty line
 
 # The history events containing the query, newest first, each command once.
 _axle_us_find() {
@@ -48,6 +49,7 @@ _axle_us_mark() {
 }
 
 _axle_us_move() {   # +1 older, -1 newer
+  _axle_us_plain=0
   # A new search unless the line is still what the last step left there.
   if [[ -z $_axle_us_last || $BUFFER != $_axle_us_last ]]; then
     _axle_us_query=$BUFFER _axle_us_at=0
@@ -72,15 +74,29 @@ _axle_us_move() {   # +1 older, -1 newer
 # Mid-walk: the line is still what the last ↑/↓ put there.
 _axle_us_walking() { [[ -n $_axle_us_last && $BUFFER == $_axle_us_last ]] }
 
+# One step of the usual history, remembering that's what this walk is.
+_axle_us_browse() {
+  zle $1
+  _axle_us_last=$BUFFER
+  _axle_us_plain=$(( ${#BUFFER} > 0 ))
+}
+
 axle-history-search-up() {
-  # Empty line, or moving between the lines of a multi-line command: the usual ↑.
-  if [[ -z $BUFFER ]] || { ! _axle_us_walking && [[ $LBUFFER == *$'\n'* ]] }; then
+  # From an empty line, and on through what that brings up: the usual ↑.
+  if [[ -z $BUFFER ]] || { (( _axle_us_plain )) && _axle_us_walking }; then
+    _axle_us_browse .up-line-or-history; return
+  fi
+  # Moving between the lines of a multi-line command: the usual ↑ too.
+  if ! _axle_us_walking && [[ $LBUFFER == *$'\n'* ]]; then
     zle .up-line-or-history; return
   fi
   _axle_us_move 1
 }
 
 axle-history-search-down() {
+  if (( _axle_us_plain )) && _axle_us_walking; then
+    _axle_us_browse .down-line-or-history; return
+  fi
   if ! _axle_us_walking && [[ -z $BUFFER || $RBUFFER == *$'\n'* ]]; then
     zle .down-line-or-history; return
   fi
@@ -90,7 +106,7 @@ axle-history-search-down() {
 # Editing the line ends the walk, and its highlight.
 _axle_us_redraw() {
   _axle_us_walking && return
-  _axle_us_last=''
+  _axle_us_last='' _axle_us_plain=0
   [[ -n ${(M)region_highlight:#*memo=axle-us*} ]] && region_highlight=(${region_highlight:#*memo=axle-us*})
 }
 

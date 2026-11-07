@@ -5,6 +5,7 @@
 (( ${+_axle_settings} )) || source "$AXLE_ROOT/lib/settings.zsh"
 
 _axle_complete() {
+  setopt localoptions extendedglob
   local -a subs reply
   local name
   for name in ${(ok)_axle_cmd_fn}; do subs+=("$name:${_axle_cmd_desc[$name]//:/\\:}"); done
@@ -26,7 +27,8 @@ _axle_complete() {
       if (( CURRENT == 3 )); then
         _values action 'ls[list modules]' 'on[switch one on]' 'off[switch one off]'
       elif (( CURRENT == 4 )); then
-        local -a mods=(${${:-$AXLE_ROOT/modules/*.zsh(N)}:t:r})
+        _axle_module_names
+        local -a mods=($reply)
         [[ $words[3] == (off|disable) ]] && mods=(${mods:*AXLE_MODULES})
         [[ $words[3] == (on|enable) ]]   && mods=(${mods:|AXLE_MODULES})
         _describe -t modules module mods
@@ -50,7 +52,9 @@ _axle_complete() {
       fi ;;
     hook)
       local -a events=('command-start:before a command runs' 'command-done:after it finishes'
-                       'prompt:before each prompt' 'expand:Alt-i toggled' 'dir:the directory changed')
+                       'prompt:before each prompt' 'expand:Alt-i toggled' 'dir:the directory changed'
+                       'run-start:axle run started something' 'run-ready:a service answers'
+                       'run-crash:what axle run started failed' 'run-stop:it stopped or finished')
       case $CURRENT in
         3) _describe -t events event events; compadd -- ls rm ;;
         4) if [[ $words[3] == rm ]]; then _describe -t events event events
@@ -74,11 +78,79 @@ _axle_complete() {
       compadd -- --here --days ;;
     history)
       _message 'how many (default 20)' ;;
+    top)
+      (( CURRENT == 3 )) && _values option '--build[build Axle'"'"'s btop]' '-p[start with a preset (0-9)]' \
+        '-u[update every <ms>]' '-f[a process filter]' '-l[256 colours]' '-t[tty mode]' ;;
     update)
       (( CURRENT == 3 )) && _values option '--check[only say whether a new version is out]' ;;
     uninstall)
       (( CURRENT == 3 )) && _values option '--yes[links and cache, no questions]' \
         '--purge[also settings and history, no questions]' ;;
+    run)
+      local -a svcs=(${XDG_STATE_HOME:-$HOME/.local/state}/axle/run/services/*(N/:t))
+      if (( CURRENT == 3 )) && [[ $PREFIX == :* ]]; then
+        # The project's tasks (axle run :test): read from its files, nothing run.
+        local REPLY; local -a tasks=()
+        if (( $+functions[_axle_run_yours_here] )) && _axle_run_yours_here 2>/dev/null &&
+           _axle_run_tasks_find $REPLY 2>/dev/null; then
+          local t; for t in $_axle_run_task_order; do tasks+=(":$t:${_axle_run_task_from[$t]}"); done
+        fi
+        _describe task tasks
+      elif (( CURRENT == 3 )) && [[ $PREFIX != -* ]]; then
+        _values action 'ls[what is running]' 'stop[stop a service]' 'restart[restart a service]' \
+          'logs[a service'"'"'s output]' 'open[open its URL]' 'set[this project'"'"'s settings]' \
+          'forget[drop this project'"'"'s settings and approvals]' \
+          'deps[install its Python packages (a shared venv if they fit)]' \
+          'top[the services live: CPU, memory, logs]' \
+          'env[what a service here gets]' 'group[several projects together]' \
+          'sh[a shell with what a service gets]' 'exec[a command with what a service gets]'
+        (( $+functions[_axle_jump_complete] )) && { shift words; (( CURRENT-- )); _axle_jump_complete }
+      elif [[ $words[3] == top ]]; then
+        _values option '--mini[a few lines under the prompt]' '--full[the whole terminal]'
+      elif [[ $words[3] == group ]]; then
+        if (( CURRENT == 4 )); then
+          compadd -- ${XDG_STATE_HOME:-$HOME/.local/state}/axle/run/groups/*(N.:t)
+        elif (( CURRENT == 5 )); then
+          _values action 'add[add this project]' 'rm[take it out]' 'stop[stop them all]'
+        else
+          _files -/
+        fi
+      elif [[ $words[3] == set ]]; then
+        case $CURRENT in
+          4) _values setting 'command[what runs]' 'port[the port it listens on]' \
+               'kind[service (background) or task (foreground)]' 'env-file[its .env file]' 'restart[start it again after a crash]' 'needs[compose services it needs, started first]' 'health[a path it answers on when well]' ;;
+          5) case $words[4] in
+               kind)     compadd -- service task ;;
+               restart)  compadd -- on-crash no ;;
+               env-file) _files -g '.env*(D)' ;;
+             esac ;;
+        esac
+      elif [[ $words[CURRENT-1] == --profile ]]; then
+        local -a profs=(.env.*(DN.))
+        profs=(${profs#.env.} none)
+        compadd -a profs
+      elif [[ $words[3] == ls ]]; then
+        compadd -- --json
+      elif [[ $words[3] == (sh|shell) ]] || [[ $words[3] == exec && $words[CURRENT-1] == -s ]]; then
+        compadd -a svcs
+      elif [[ $words[3] == exec ]]; then
+        (( CURRENT == 4 )) && compadd -- -s
+        compadd -k commands
+      elif [[ $words[3] == (stop|restart|logs|open) ]]; then
+        [[ $words[3] == (stop|logs) ]] && svcs+=(all)
+        [[ $words[3] == logs ]] && compadd -- -f -n
+        compadd -a svcs
+      elif [[ $PREFIX == -* ]]; then
+        _values option '--dry-run[say what would run, and why]' '--yes[run without asking]' \
+          '--fg[in the foreground]' '--bg[in the background]' '--config[choose the parts again]' \
+          '--verbose[show these parts'"'"' output]' '--only[just the --verbose parts]' \
+          '--profile[use .env.<name> over .env, remembered]' '--quiet[no ▶ lines or hints]'
+      elif (( $+functions[_axle_jump_complete] )); then
+        shift words; (( CURRENT-- ))
+        _axle_jump_complete
+      else
+        _directories
+      fi ;;
     jump)
       if (( $+functions[_axle_jump_complete] )); then
         shift words; (( CURRENT-- ))
@@ -104,7 +176,7 @@ _axle_complete() {
              int)      _message "a whole number (default ${reply[3]:-none})" ;;
              choice:*) local -a vals=(${(s:,:)reply[2]#choice:}); compadd -a vals ;;
              list)     case $words[4] in
-                         AXLE_MODULES) local -a v=(${${:-$AXLE_ROOT/modules/*.zsh(N)}:t:r}); compadd -a v ;;
+                         AXLE_MODULES) _axle_module_names; local -a v=($reply); compadd -a v ;;
                          AXLE_SUGGEST_STRATEGY) compadd smart history completion ;;
                          AXLE_NOX_*|AXLE_AXON_SHOW)
                            local -a v=(${${(M)${(k)functions}:#_axle_seg_*}#_axle_seg_}); compadd -a v ;;

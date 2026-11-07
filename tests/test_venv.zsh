@@ -48,3 +48,46 @@ test_toolchain_pins() {
   assert_eq "$REPLY" "node 25.6.0 (wants 20)" "flagged"
   assert_eq $_axle_alarm 2 "as an amber alarm"
 }
+
+# `deactivate` in a venv the env module turned on: off until you leave the project.
+test_env_deactivate() {
+  AXLE_MODULES=(env) load_tool
+  _mkvenv $T/proj/.venv; print > $T/proj/requirements.txt; mkdir -p $T/proj/src $T/out
+  unset VIRTUAL_ENV
+  local out
+  cd $T/proj; _axle_env_sync
+  assert_eq "$VIRTUAL_ENV" $T/proj/.venv "on when entering"
+  (( $+functions[deactivate] )) || fail "deactivate exists"
+  out=$(deactivate 2>&1; print "venv=$VIRTUAL_ENV")
+  assert_contains "$out" "left the proj venv" "says so"
+  deactivate >/dev/null 2>&1
+  assert_eq "${VIRTUAL_ENV:-none}" none "off"
+  (( ${path[(Ie)$T/proj/.venv/bin]} )) && fail "and its bin/ is off PATH"
+  (( $+functions[deactivate] )) && fail "deactivate is gone with it"
+  cd $T/proj/src; _axle_env_sync
+  assert_eq "${VIRTUAL_ENV:-none}" none "stays off inside the project"
+  cd $T/out; _axle_env_sync; cd $T/proj; _axle_env_sync
+  assert_eq "$VIRTUAL_ENV" $T/proj/.venv "back on when entering again"
+  # A venv's own activate script calls `deactivate nondestructive` first: quietly make way.
+  out=$(deactivate nondestructive 2>&1)
+  assert_eq "$out" "" "nothing said for activate's call"
+}
+
+# `exec zsh` (or a nested shell) in a project: the venv the module turned on is still its own.
+test_env_child_shell_keeps_switching() {
+  AXLE_MODULES=(env) load_tool
+  _mkvenv $T/proj/.venv; print > $T/proj/requirements.txt; mkdir -p $T/out
+  unset VIRTUAL_ENV
+  cd $T/proj; _axle_env_sync >/dev/null
+  local out
+  out=$(cd $T/proj && AXLE_MODULES=(env) zsh -fc "source $ROOT/tests/lib.zsh; load_tool
+    (( \$+functions[deactivate] )) && print has-deactivate
+    cd $T/out; _axle_env_sync; print venv=\${VIRTUAL_ENV:-none}" 2>&1)
+  assert_contains "$out" "has-deactivate"
+  assert_contains "$out" "left the proj venv"
+  assert_contains "$out" "venv=none" "switched off on leaving"
+  # One you activated yourself is still left alone.
+  out=$(cd $T/proj && AXLE_ENV_AUTO= zsh -fc "source $ROOT/tests/lib.zsh; AXLE_MODULES=(env) load_tool
+    cd $T/out; _axle_env_sync; print venv=\$VIRTUAL_ENV" 2>&1)
+  assert_contains "$out" "venv=$T/proj/.venv"
+}

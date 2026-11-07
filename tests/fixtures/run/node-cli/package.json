@@ -1,0 +1,4 @@
+{
+  "name": "cli",
+  "scripts": { "start": "node bin/cli.js" }
+}
