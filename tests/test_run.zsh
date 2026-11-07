@@ -419,7 +419,7 @@ test_run_killed_by_hand() {
   pid=$(<$dir/pid)
   kill -TERM $(<$dir/watcher)
   local -i i
-  for i in {1..60}; do [[ -e $dir ]] || break; sleep 0.1; done
+  for i in {1..60}; do [[ -e $dir || -e $drop ]] || break; sleep 0.1; done
   kill -0 $pid 2>/dev/null && fail "TERM to the supervisor stops the service"
   [[ -e $dir || -e $drop ]] && fail "and leaves nothing behind"
 
@@ -1450,5 +1450,71 @@ test_run_deps_shared_venv() {
   axle run deps click > $T/out 2>&1 || fail "deps solo: $(<$T/out)"
   assert_contains "$(<$T/pip.log)" "pip install requests>=2 rich click (in $T/solo)"
   [[ -e $T/solo/.venv/pyvenv.cfg ]] || fail "solo's own venv"
+  return 0
+}
+
+# --- M7: axle run top -----------------------------------------------------------------
+
+# Both views: the mini one without a terminal; the full frame fills the screen exactly,
+# fits its width at any size, redraws in place (no clearing: no flicker), and a sample plus
+# a frame stays cheap (1 Hz under 1% CPU means well under 10 ms each).
+test_run_top_views() {
+  setopt localoptions extendedglob
+  AXLE_MODULES=(run) load_tool
+  local REPLY port; free_port; port=$REPLY
+  web_project $port || return 0
+  _axle_run_start $T/web web
+  wait_state web up || return 0
+  mkdir -p $T/bad; typeset -ga _axle_run_cmd=(sh -c 'echo boom; exit 2'); typeset -g _axle_run_port=''
+  _axle_run_start $T/bad bad
+  wait_state bad crashed || return 0
+  local out=$(axle run top </dev/null)
+  assert_contains "$out" "axle run top · 2 services"
+  assert_contains "$out" "web"
+  assert_contains "$out" ":$port"
+  assert_contains "$out" "exit 2 (axle run logs bad)"
+  [[ $out == *$'\e'* ]] && fail "no colours without a terminal"
+  # The full frame.
+  _axle_top_init; _axle_top_sample; sleep 1.1; _axle_top_sample
+  local -a reply lines; local l plain size
+  for size in 100x30 80x24 160x50; do
+    _axle_top_full ${size%x*} ${size#*x} web ''
+    lines=($reply)
+    assert_eq ${#lines} ${size#*x} "$size: fills the screen"
+    for l in $lines; do
+      plain=${l//$'\e'\[[0-9;]#m/}
+      (( ${(m)#plain} <= ${size%x*} )) || fail "$size: a line is too wide (${(m)#plain}): $plain"
+    done
+    plain=${(F)lines//$'\e'\[[0-9;]#m/}
+    assert_contains "$plain" "╭─ axle run top"
+    assert_contains "$plain" "╭─ services"
+    assert_contains "$plain" "╭─ web"
+    assert_contains "$plain" "╭─ log"
+    assert_contains "$plain" "▶ ${${commands[python3]:-$commands[python]}:t} "
+    assert_contains "$plain" "localhost:$port"
+  done
+  # Drawn over the last frame: home, no clearing.
+  COLUMNS=100 LINES=30 _axle_top_draw full web '' > $T/frame
+  out=$(<$T/frame)
+  [[ $out == $'\e[H'* ]] || fail "starts at home"
+  [[ $out == *$'\e[2J'* ]] && fail "never clears the screen"
+  _axle_top_drawn=0
+  COLUMNS=100 _axle_top_draw mini web '' > $T/frame; COLUMNS=100 _axle_top_draw mini web '' > $T/frame
+  [[ $(<$T/frame) == $'\r\e[2A'* ]] || fail "mini redraws over its 3 lines"
+  # An arrow key whose bytes come apart (Windows Terminal, WSL) is still an arrow.
+  out=$( { print -n $'\e'; sleep 0.05; print -n '[A' } | { _axle_top_key 1; print -r -- $REPLY } )
+  assert_eq "$out" "up" "an arrow key in pieces"
+  out=$( print -n 'j' | { _axle_top_key 1; print -r -- $REPLY } )
+  assert_eq "$out" "j" "a letter"
+  # Graphs.
+  _axle_top_graph "0 50 100" 3 2; assert_eq "${(j:|:)reply}" "  █| ██" "graph"
+  _axle_top_spark "0 50 100" 4 100; assert_eq "$REPLY" "  ▄█" "spark"
+  # Cost: ten samples and frames.
+  local -F t0=$EPOCHREALTIME
+  local -i i
+  for i in {1..10}; do _axle_top_sample; _axle_top_full 120 40 web ''; done
+  local -F ms=$(( (EPOCHREALTIME - t0) * 100 ))
+  (( ms < 50 )) || fail "a sample and a frame took ${ms} ms"
+  axle run stop all >/dev/null 2>&1
   return 0
 }

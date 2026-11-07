@@ -78,6 +78,9 @@ _axle_complete() {
       compadd -- --here --days ;;
     history)
       _message 'how many (default 20)' ;;
+    top)
+      (( CURRENT == 3 )) && _values option '--build[build Axle'"'"'s btop]' '-p[start with a preset (0-9)]' \
+        '-u[update every <ms>]' '-f[a process filter]' '-l[256 colours]' '-t[tty mode]' ;;
     update)
       (( CURRENT == 3 )) && _values option '--check[only say whether a new version is out]' ;;
     uninstall)
@@ -89,8 +92,11 @@ _axle_complete() {
         _values action 'ls[what is running]' 'stop[stop a service]' 'restart[restart a service]' \
           'logs[a service'"'"'s output]' 'open[open its URL]' 'set[this project'"'"'s settings]' \
           'forget[drop this project'"'"'s settings and approvals]' \
-          'deps[install its Python packages (a shared venv if they fit)]'
+          'deps[install its Python packages (a shared venv if they fit)]' \
+          'top[the services live: CPU, memory, logs]'
         (( $+functions[_axle_jump_complete] )) && { shift words; (( CURRENT-- )); _axle_jump_complete }
+      elif [[ $words[3] == top ]]; then
+        _values option '--mini[a few lines under the prompt]' '--full[the whole terminal]'
       elif [[ $words[3] == set ]]; then
         case $CURRENT in
           4) _values setting 'command[what runs]' 'port[the port it listens on]' \

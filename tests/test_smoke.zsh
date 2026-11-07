@@ -28,13 +28,14 @@ typeset -gA _not_run=(
   uninstall 'removes things (it has its own test)'
   update    'uses the network (it has its own test)'
   ai        'uses the network'
+  top       'opens btop, full screen (it has its own test)'
 )
 typeset -ga _runs=(
   'colors' 'config' 'config get AXLE_PALETTE' 'configure' 'debug' 'doctor' 'drop --ls' 'fix'
   'history' 'history 5' 'hook ls' 'jump -l nothing' 'module' 'module ls' 'palette'
   'preview --list' 'refresh' 'reload' 'run -n' 'run ls' 'run logs' 'run stop' 'run open'
   'run restart' 'run nothing-like-this' 'segment ls' 'segments' 'stats' 'stats --here' 'tmux'
-  'variant' 'version' 'help'
+  'variant' 'version' 'help' 'run top'
 )
 
 test_every_command_runs_clean_from_any_folder() {

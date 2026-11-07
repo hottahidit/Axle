@@ -8,9 +8,10 @@
 >
 > **It's a work in progress, and `run` is off by default here.** Finding and running projects,
 > background services, ports, projects with several parts, and your own per-project settings
-> (`axle run set`, `--profile`), and crash diagnosis (the fix on the line with Esc Esc) are built
-> and being tested. A live monitor is planned. `axle run` isn't described in the rest
-> of this README yet, and the plan is in [docs/legionary/ROADMAP.md](docs/legionary/ROADMAP.md).
+> (`axle run set`, `--profile`), crash diagnosis (the fix on the line with Esc Esc), shared venvs
+> and a live monitor (`axle top`: btop, with an Axle mode for the services) are built and
+> being tested. `axle run` isn't described in the rest of this README yet,
+> and the plan is in [docs/legionary/ROADMAP.md](docs/legionary/ROADMAP.md).
 >
 > **To try it,** on this branch:
 >
@@ -794,6 +795,10 @@ zsh itself is the rest: on WSL a bare interactive zsh takes far longer to start 
 
 [MIT](LICENSE): use, modify, fork and share Axle and Benzene freely, including in commercial
 projects, as long as the copyright and licence notice come along.
+
+`vendor/btop` is [btop](https://github.com/aristocratos/btop) by Aristocratos, under its
+own [Apache License 2.0](vendor/btop/LICENSE), with Axle's changes listed in
+[vendor/btop/AXLE.md](vendor/btop/AXLE.md).
 
 ## Layout
 

@@ -210,10 +210,20 @@ Each milestone ends with its tests passing (Linux + macOS CI) and is usable on i
   `axle run deps` installs into it with its installed versions as pip constraints, and a
   project that conflicts gets its own `.venv`.
 
-### M7 · `axle run top`
+### M7 · `axle run top` ✔
 - A live view (in the shell, no extra tools): each service's state, uptime, CPU, memory, port,
   and its last log lines; keys to stop / restart / open / follow logs.
 - **Done when:** it redraws without flicker at 1 Hz and costs under 1% CPU.
+- Built: `modules/run/top.zsh`, two views. The full one (btop-inspired, Axle's own look):
+  boxes for total CPU over time, the services (bars when wide), and the selected one's
+  details, graphs and log; `--mini` is a few lines under the prompt. Each frame is written
+  over the last one in one go (alternate screen, no clearing, no line wrap). Measured:
+  0.2–0.4% CPU at 80×24 to 200×60 (WSL2). CPU is averaged over 2 s: the kernel can count a
+  busy process late and then all at once.
+- The whole system is `axle top`: btop, carried in `vendor/btop` (1.4.8) with an Axle mode
+  (key `A`, `--axle-dir`, `--axle-only`: only axle run's processes), built by `install.sh`
+  or `axle top --build`; `axle run top` opens it in that mode, and keeps this zsh view as
+  the fallback (and for `--mini`). A zsh system monitor was tried and dropped for it.
 
 ### Merge (→ `main`)
 - Remove the branch note at the top of the README.

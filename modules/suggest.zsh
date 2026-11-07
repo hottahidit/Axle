@@ -321,7 +321,11 @@ axle-suggest-prev() { _axle_sg_cycle -1 || _axle_sg_key_fallback }
 # zsh-autosuggestions-style widgets, for your own key bindings.
 axle-suggest-accept()  { _axle_sg_take || zle .end-of-line }
 axle-suggest-partial() { _axle_sg_take word || zle .forward-word }
-axle-suggest-execute() { _axle_sg_take; _axle_sg_clear; zle .accept-line }
+axle-suggest-execute() {
+  _axle_sg_take; _axle_sg_clear
+  (( $+functions[_axle_fix_parse_ok] )) && ! _axle_fix_parse_ok && return 0
+  zle .accept-line
+}
 axle-suggest-clear()   { _axle_sg_clear; _axle_sg_buffer=$BUFFER _axle_sg_cursor=$CURSOR }
 axle-suggest-toggle()  {
   (( AXLE_SUGGEST ^= 1 ))
@@ -340,7 +344,11 @@ _axle_sg_vi_fwd_word()     { _axle_sg_take word  || zle .vi-forward-word }
 _axle_sg_vi_fwd_word_end() { _axle_sg_take word  || zle .vi-forward-word-end }
 _axle_sg_vi_fwd_blank()    { _axle_sg_take word  || zle .vi-forward-blank-word }
 _axle_sg_vi_fwd_blank_end(){ _axle_sg_take word  || zle .vi-forward-blank-word-end }
-_axle_sg_accept_line()     { _axle_sg_clear; zle .accept-line }
+_axle_sg_accept_line()     {                     # (and the fix module's check, if it's on)
+  _axle_sg_clear
+  (( $+functions[_axle_fix_parse_ok] )) && ! _axle_fix_parse_ok && return 0
+  zle .accept-line
+}
 
 typeset -gA _axle_sg_widgets=(
   forward-char _axle_sg_forward_char          end-of-line _axle_sg_end_of_line

@@ -201,6 +201,76 @@ axle-fix() {
 
 # --- install -------------------------------------------------------------------------
 
+# A command that doesn't exist, said in Axle's colours with the one you probably meant:
+#   ✘ gti: no such command
+#     did you mean git? (Esc Esc puts it on the line)
+# The guess only looks at what you run, aliases, functions and builtins (listing all of
+# PATH is slow; Esc Esc looks there too). A handler another tool set up is left alone.
+: ${AXLE_FIX_NOTFOUND=1}
+if (( AXLE_FIX_NOTFOUND )) && (( ! $+functions[command_not_found_handler] )); then
+  command_not_found_handler() {
+    local w=${1//[[:cntrl:]]/?} c REPLY
+    local -a mine=()
+    for c in ${(k)_axle_sg_count}; do mine+=(${c%% *}); done
+    mine=(${(u)mine} ${(k)aliases} ${(k)builtins} ${${(k)functions}:#_*})
+    local m=${_axle_c[muted]:-244}
+    _axle_printp "%F{${_axle_c[error]:-red}}✘%f %B${w//\%/%%}%b%F{$m}: no such command%f" >&2
+    if _axle_fix_closest "$1" $mine; then
+      local how='fix puts it on the line'
+      [[ -n $AXLE_FIX_KEY ]] && how='Esc Esc puts it on the line'
+      [[ -z $AXLE_FIX_KEY && -z $AXLE_FIX_CMD ]] && how=''
+      _axle_printp "  %F{$m}did you mean%f %F{${_axle_c[accent]:-magenta}}${REPLY//\%/%%}%f%F{$m}?${how:+ ($how)}%f" >&2
+    fi
+    return 127
+  }
+fi
+
+# A line zsh can't read as a command (it would only say "parse error near `<>'"): said on
+# Enter in Axle's style, and the line stays to fix. Enter again runs it as it is (zsh then
+# says its own). An unfinished line (an open quote, if, for, {, $(, a | at the end) goes on
+# to the next line as zsh does: it's parsed as a function body (in this shell, nothing
+# runs) with a line after it; when only that line is wrong, it was just unfinished.
+: ${AXLE_FIX_PARSE=1}
+typeset -g _axle_fix_refused=''
+_axle_fix_parse_ok() {
+  setopt localoptions extendedglob
+  (( AXLE_FIX_PARSE )) || return 0
+  local text=$PREBUFFER$BUFFER msg='' f
+  [[ -n ${text//[[:space:]]/} ]] || return 0
+  [[ $text == $_axle_fix_refused ]] && { _axle_fix_refused=''; return 0 }
+  _axle_fix_refused=''
+  (( $+functions[_axle_fix_chk] )) && unfunction _axle_fix_chk
+  functions[_axle_fix_chk]=$text 2>/dev/null
+  (( $+functions[_axle_fix_chk] )) && { unfunction _axle_fix_chk; return 0 }
+  f=${XDG_CACHE_HOME:-$HOME/.cache}/axle/parse.$$
+  command mkdir -p -- ${f:h} 2>/dev/null
+  functions[_axle_fix_chk]=$text$'\n'_axle_fix_next_line 2>$f
+  (( $+functions[_axle_fix_chk] )) && { unfunction _axle_fix_chk; command rm -f -- $f; return 0 }
+  [[ -r $f ]] && msg=${${(f)"$(<$f)"}[1]}
+  command rm -f -- $f
+  local -i lines=$(( ${#text//[^$'\n']/} + 1 ))
+  [[ $msg =~ ':([0-9]+): (.*)$' ]] || return 0      # (not one we know: zsh's turn)
+  local -i at=$match[1]; local what=$match[2]
+  (( at > lines )) && [[ $what != *'near `\n'"'"* ]] && return 0   # unfinished
+  # Wrong as it is: say why, keep the line.
+  local why=$what
+  case $what in
+    *'near `\n'"'"*)
+      why="something is missing at the end"
+      [[ ${text%%[[:space:]]#} =~ '([<>|&;]+)$' ]] && why="something is missing after $match[1]" ;;
+    'parse error near `'*) why="unexpected ${${what#*\`}%\'}" ;;
+    'parse error: '*)  why=${what#parse error: } ;;
+  esac
+  why=${why//[[:cntrl:]]/?}
+  local m=${_axle_c[muted]:-244}
+  zle -I
+  _axle_printp "%F{${_axle_c[error]:-red}}✘%f zsh can't read this line: %B${why//\%/%%}%b"
+  _axle_printp "  %F{$m}it's kept to fix; Enter again runs it as it is%f"
+  _axle_fix_refused=$text
+  return 1
+}
+_axle_fix_accept_line() { _axle_fix_parse_ok && zle .accept-line }
+
 if [[ -n $AXLE_FIX_CMD ]]; then
   functions[$AXLE_FIX_CMD]='_axle_fix_cmd "$@"'
   axle_command fix _axle_fix_cmd tool "fix  ($AXLE_FIX_CMD)" 'correct the last command (on the line, to check)'
@@ -208,4 +278,8 @@ fi
 if (( $+builtins[zle] )) && [[ -n $AXLE_FIX_KEY ]]; then
   zle -N axle-fix
   bindkey -M emacs "$AXLE_FIX_KEY" axle-fix
+fi
+# Enter checks the line first (suggest's own Enter calls the check too, whichever loads first).
+if (( $+builtins[zle] )) && [[ ${widgets[accept-line]} == builtin ]]; then
+  zle -N accept-line _axle_fix_accept_line
 fi

@@ -50,7 +50,7 @@ _axle_hl_runnable() {
       _axle_hl_known[$w]=0
     fi
   fi
-  (( _axle_hl_known[$w] ))
+  (( ${_axle_hl_known[$w]} ))                      # (expanded first: a word like ] is no subscript)
 }
 
 _axle_hl_add() {   # _axle_hl_add <start> <end> <kind>

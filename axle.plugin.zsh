@@ -32,6 +32,8 @@ axle_command doctor  _axle_cmd_doctor  tool 'doctor'               'check the se
 axle_command module  _axle_cmd_module  tool 'module [on|off <name>]'  'list modules, or switch one on or off'
 axle_command hook    _axle_hook_cmd    tool 'hook <event> <fn>'    'run a function on shell events'
 axle_command drop    _axle_cmd_drop    tool 'drop <name> <text>'   'a tab in every prompt, from any program'
+_axle_lazy lib/top.zsh _axle_cmd_top
+axle_command top     _axle_cmd_top     tool 'top [btop options]'   'the system live (runs btop)'
 # Folder ranking from the history log (j, axle run).
 _axle_lazy lib/rank.zsh _axle_jump_load _axle_jump_rank
 

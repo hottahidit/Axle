@@ -5,3 +5,8 @@
 
 # Python bytecode (axle run's startup hook, modules/run/py)
 __pycache__/
+
+# Axle's btop, built from vendor/btop (tools/axle-build-btop)
+vendor/btop/bin/
+vendor/btop/obj/
+vendor/btop/btop.1

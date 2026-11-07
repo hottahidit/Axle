@@ -373,6 +373,7 @@ _axle_cmd_run() {
     set)      shift; _axle_run_set_cmd "$@"; return ;;
     forget)   shift; _axle_run_forget_project "$@"; return ;;
     deps)     shift; _axle_run_deps "$@"; return ;;
+    top)      shift; _axle_run_top "$@"; return ;;
   esac
   local dry=0 yes=0 mode='' config=0 only=0 vset=0 profile='' pset=0
   local -a words=() vnames=()

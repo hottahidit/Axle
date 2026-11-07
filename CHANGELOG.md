@@ -20,8 +20,26 @@ Fixed for everyone:
   defines it); now it does, and the venv stays off until you leave the project. After
   `exec zsh` (or in a nested shell), its venv counted as one you'd activated by hand, so it
   was never switched off again.
+- `highlight`: typing a word with a `]` in it (`]` alone, `a]b`) printed
+  `_axle_hl_runnable:14: invalid subscript` over the line.
 
 Also for everyone:
+- `axle top`: the system live, with btop. Axle carries btop 1.4.8 (`vendor/btop`,
+  Apache-2.0, by Aristocratos) with an **Axle mode** added: key `A` shows only the processes
+  `axle run` started (its services and everything under them), and `axle run top` opens it
+  that way. `install.sh` offers to build it (`--btop` / `--no-btop`), `axle top --build`
+  builds it later (`tools/axle-build-btop`; needs GNU make and g++ 14+ or clang 19+, and
+  says what to install). Not built: `axle top` runs an installed btop; neither: it says how
+  to get one. btop reads its usual settings; the Axle mode isn't saved in them.
+- `fix`: a command that doesn't exist is said in Axle's style instead of zsh's
+  `command not found`, with the closest one you could have meant (`✘ gti: no such command`,
+  `did you mean git? (Esc Esc puts it on the line)`). `AXLE_FIX_NOTFOUND=0` turns it off; a
+  handler another tool set up is left alone.
+- `fix`: a line zsh can't read (it would only say `parse error near ...`) is caught on Enter
+  and said plainly (`✘ zsh can't read this line: something is missing after <>`,
+  `unexpected }`), and the line stays to fix; Enter again runs it as it is. An unfinished
+  line (an open quote, `if`, `for`, `{`, `$(`, a `|` at the end) goes on to the next line
+  as before. It's parsed in the shell, nothing runs. `AXLE_FIX_PARSE=0` turns it off.
 - `axle help` and each command's help are styled: sections with rules, commands, aliases
   and arguments in colour, examples with their command picked out and notes dimmed, long
   descriptions wrapped. Plain when piped or with `NO_COLOR`. The `run` line no longer runs
@@ -111,6 +129,15 @@ New:
     whose versions conflict gets its own `.venv` instead, used from then on. Without a
     shared venv it installs into the project's own (making it if needed). Crash fixes for a
     missing module use `axle run deps` there.
+  - `axle run top`: Axle's btop showing only the services (above), when it's built;
+    otherwise (and with `--mini` / `--full`) the services live, in the shell. The full view fills the terminal:
+    their total CPU over time, each service with its state, port, uptime, CPU and memory
+    (bars when there's room), and the selected one's folder, command, CPU and memory graphs
+    and last log lines. `--mini` is a few lines under the prompt, one per service with a CPU
+    sparkline. Keys: ↑↓ select, `s` stop (asks), `r` restart, `o` open, `l` follow its log
+    (Ctrl-C comes back), `m` the other view, `q` quit; it opens in the view you left it in.
+    It samples once a second from /proc on Linux (one `ps` elsewhere), redraws over the
+    last frame without clearing (no flicker), and uses well under 1% CPU (0.2–0.4% here).
   - A missing program (pnpm, cargo, ...) is said before anything is asked, with how to
     install it; answering no to "Run <last project>?" leaves you where you were and lists the
     other projects you worked in lately, to run one of them instead (Esc: none), and

@@ -7,19 +7,22 @@
 #             --yes             don't ask before removing the unused part (non-git copies)
 #             --keep            keep the unused part's files
 #             --no-configure    don't start `axle configure` afterwards
+#             --btop / --no-btop  build Axle's btop for `axle top` without asking / don't
 #
 # With oh-my-zsh it links what you chose into $ZSH_CUSTOM; otherwise it prints the lines for
 # ~/.zshrc. It never edits ~/.zshrc. If you choose only one part, the other's files are
 # removed: in a git clone through sparse checkout, so `axle update` keeps working and
 # choosing "both" later brings them back. It won't remove files with uncommitted changes.
-# If the tool is included, the setup wizard (`axle configure`) runs at the end.
+# If the tool is included, it offers to build Axle's btop (vendor/btop: btop with the Axle
+# mode, for `axle top`; needs make and g++ 14+ or clang 19+), and the setup wizard
+# (`axle configure`) runs at the end.
 emulate -L zsh
 setopt no_nomatch
 
 repo="${0:A:h}"
 omz="${ZSH:-$HOME/.oh-my-zsh}"
 custom="${ZSH_CUSTOM:-$omz/custom}"
-choice='' plain=0 yes=0 keep=0 configure=1
+choice='' plain=0 yes=0 keep=0 configure=1 btop=-1
 
 for arg in "$@"; do
   case $arg in
@@ -28,7 +31,9 @@ for arg in "$@"; do
     --yes)          yes=1 ;;
     --keep)         keep=1 ;;
     --no-configure) configure=0 ;;
-    -h|--help)      sed -n '2,17s/^# \{0,1\}//p' $0; exit 0 ;;
+    --btop)         btop=1 ;;
+    --no-btop)      btop=0 ;;
+    -h|--help)      sed -n '2,21s/^# \{0,1\}//p' $0; exit 0 ;;
     *)              print -u2 "install.sh: unknown option $arg (see --help)"; exit 2 ;;
   esac
 done
@@ -56,7 +61,7 @@ want_tool=0 want_theme=0
 
 # --- the other part's files ------------------------------------------------------------
 
-tool_paths=(axle.plugin.zsh core modules tools)
+tool_paths=(axle.plugin.zsh core modules tools vendor)
 theme_paths=(benzene.zsh-theme benzene)
 unused=()
 (( want_tool ))  || unused+=($tool_paths)
@@ -141,6 +146,28 @@ fi
 
 # Precompile to zsh bytecode, so shells load it about twice as fast (*.zwc, ignored by git).
 zsh -f -c "AXLE_ROOT=${(q)repo}; source ${(q)repo}/lib/command.zsh; _axle_compile" 2>/dev/null
+
+# --- Axle's btop (axle top) -------------------------------------------------------------
+
+if (( want_tool && btop != 0 )) && [[ ! -x $repo/vendor/btop/bin/btop ]]; then
+  if zsh -f $repo/tools/axle-build-btop --check >/dev/null 2>&1; then
+    go=$(( btop == 1 ))
+    if (( ! go )) && [[ -t 0 ]]; then
+      print
+      print -n "Build Axle's btop for \`axle top\` (about a minute)? [Y/n] "
+      read -r answer && [[ $answer != [nN]* ]] && go=1
+    fi
+    if (( go )); then
+      zsh -f $repo/tools/axle-build-btop || print "  (\`axle top\` uses an installed btop meanwhile.)"
+    else
+      print "Skipped; \`axle top --build\` builds it later."
+    fi
+  else
+    print
+    print "Axle's btop (for \`axle top\`) isn't built:"
+    zsh -f $repo/tools/axle-build-btop --check 2>&1 | sed 's/^axle-build-btop: /  /'
+  fi
+fi
 
 # --- set it up -------------------------------------------------------------------------
 
