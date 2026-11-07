@@ -1,5 +1,21 @@
 # Changelog
 
+## nemc compat 0.3.0 (branch `MnemoCetus`)
+
+- **`git push` asks first where nemc has found secrets.** Typed in a project with stored
+  security findings, it lists them (up to five) and asks `Push anyway? (y/N)`. Aliases such as
+  `gp` count; scripts and your own functions are left alone, and so is a `git` function of yours
+  (`axle doctor` says so). The state comes from the prompt's memory, or from nemc when that's
+  older than `AXLE_NEMC_TTL`. Without a terminal to ask on, it warns and pushes.
+  `AXLE_NEMC_GUARD=0` turns it off; `command git push` skips it once.
+- **`j` knows nemc's projects.** `j shop` finds a project nemc has scanned even if you've never
+  worked in it, ranked below every folder you have (`j` alone still lists only yours). Kept:
+  projects nemc is sure of or you confirmed, none inside `node_modules`, build or hidden folders.
+  The list is saved in `~/.cache/axle/nemc-projects`, refreshed in the background after
+  `nemc scan`, `rescan`, `projects`, `db` or the menu, and by `j` when it's a day old; never at
+  a prompt.
+- `j` takes folders from other parts of Axle (`_axle_jump_more`); this branch is the first.
+
 ## nemc compat 0.2.0 (branch `MnemoCetus`)
 
 - **`nemc` runs through Axle.** Type `nemc` as usual (same arguments, same output); Axle runs it,

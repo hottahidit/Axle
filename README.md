@@ -3,7 +3,8 @@
 > **Why this branch exists:** [MnemoCetus](https://github.com/hottahidit/MnemoCetus) is a separate
 > project that scans your projects, and it works well alongside Axle. Rather than fold it into Axle,
 > this long-lived branch keeps following `main` and adds what connects the two: `nemc` runs through Axle
-> (the prompt follows it, hook events, `axle nemc`) and MnemoCetus's state is in the Benzene prompt. `install.sh` moves you here if you choose
+> (the prompt follows it, hook events, `axle nemc`), MnemoCetus's state is in the Benzene prompt, and `git push`
+> asks first where it has found secrets, and `j` knows the projects it has scanned. `install.sh` moves you here if you choose
 > MnemoCetus during setup. Without MnemoCetus, this branch behaves like `main`.
 
 **Axle** is a toolkit for zsh: smart suggestions as you type, `j` to jump to the folder you mean,
@@ -69,7 +70,9 @@ antidote's `hottahidit/axle path:benzene.zsh-theme`.
 **MnemoCetus** (experimental, optional, asked first; `--nemc`, `--no-nemc`): [MnemoCetus](https://github.com/hottahidit/MnemoCetus)
 is a separate project that scans your projects. Choosing it installs `nemc` (with uv or pipx) and
 moves this checkout to Axle's `MnemoCetus` branch, which `axle update` then follows. That adds
-`axle nemc` and the folder's state in the Benzene prompt.
+`axle nemc` and the folder's state in the Benzene prompt, and `git push` asks first in a project
+where MnemoCetus has found secrets (`AXLE_NEMC_GUARD=0` turns that off). `j` also finds the projects
+MnemoCetus has scanned, even before you've worked in them.
 
 `ZSH_THEME="axle"` (the old name) still works and loads whatever is installed. `axle doctor`
 checks the setup; `axle update` updates.

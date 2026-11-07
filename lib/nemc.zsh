@@ -4,6 +4,8 @@
 #   nemc [command]        nemc, run through axle: the prompt follows it, hook events, never a
 #                         nemc that came with a project (`command nemc` skips axle)
 #   axle nemc [command]   the same, listed in `axle help` (no command: `nemc status`)
+#   git push              asks first where nemc has stored security findings
+#   j <words>             also finds the projects nemc has scanned
 #   Benzene segment       nemc's state for this folder, read from memory on every prompt
 #                         and refreshed in the background (the prompt never waits on Python)
 #
@@ -18,7 +20,7 @@
 # the hook name __nemc_precmd. AXLE_NEMC=0 turns all of it off. It never runs a nemc that came
 # with a project (see "which nemc" below).
 
-typeset -g  AXLE_NEMC_COMPAT=0.2.0
+typeset -g  AXLE_NEMC_COMPAT=0.3.0
 : ${AXLE_NEMC:=1} ${AXLE_NEMC_TTL:=60}
 typeset -gA _axle_nemc_state _axle_nemc_age     # folder -> "state:findings" / when it was read
 typeset -g  _axle_nemc_fd=''
@@ -96,6 +98,7 @@ _axle_nemc_run() {
   command $bin "$@"
   local -i st=$?
   _axle_nemc_age=()                             # it may have scanned: read every folder again
+  [[ ${1:-} == (|scan|rescan|projects|db) ]] && _axle_nemc_projects_refresh $bin
   (( $+functions[_axle_emit] )) && _axle_emit nemc-done $st "$@"
   return st
 }
@@ -112,6 +115,116 @@ _axle_cmd_nemc() {
   _axle_nemc_run "$@"
 }
 axle_command nemc _axle_cmd_nemc general 'nemc [command]' 'MnemoCetus: scan, status, secrets, reclaim, ...'
+
+# --- before a push ------------------------------------------------------------------
+#
+# `git push` typed in a project where nemc has stored security findings asks first, listing
+# them. Only what you type (aliases such as gp too): a script, or a function of yours that
+# pushes, is left alone. The state usually comes from the prompt's memory; when that's older
+# than AXLE_NEMC_TTL (or there's no Benzene), nemc is asked then, which takes a moment.
+# AXLE_NEMC_GUARD=0 turns it off; `command git push` skips it once.
+
+# The folder git will work in, if this is a push: REPLY. Status 1 for anything else.
+_axle_nemc_push_dir() {
+  local dir=$PWD
+  while (( $# )); do
+    case $1 in
+      -C)   (( $# > 1 )) || return 1; [[ $2 == /* ]] && dir=$2 || dir=$dir/$2; shift 2 ;;
+      -c|--git-dir|--work-tree|--namespace|--super-prefix|--config-env) shift 2 ;;
+      -*)   shift ;;
+      push) REPLY=${dir:a}; return 0 ;;          # (as the prompt names it: no :A)
+      *)    return 1 ;;
+    esac
+  done
+  return 1
+}
+
+# Status 1 when the push should not go ahead.
+_axle_nemc_guard() {
+  (( AXLE_NEMC && ${AXLE_NEMC_GUARD:-1} && $+commands[nemc] )) || return 0
+  setopt localoptions nobashrematch
+  local REPLY dir bin out line n
+  local -a found match
+  _axle_nemc_push_dir "$@" || return 0
+  dir=$REPLY
+  _axle_nemc_bin || return 0                    # not a nemc that came with this project
+  bin=$REPLY
+  (( EPOCHSECONDS - ${_axle_nemc_age[$dir]:-0} < AXLE_NEMC_TTL )) ||
+    _axle_nemc_take "$(_axle_nemc_worker $dir $bin)"
+  [[ ${_axle_nemc_state[$dir]%%:*} == security ]] || return 0
+
+  # What nemc found: data, printed as text (never expanded or run).
+  out=$(command $bin secrets --json $dir 2>/dev/null)
+  for line in "${(@f)out}"; do
+    [[ $line =~ '^ *"detail": *"(.*)",?$' ]] && found+=("${${match[1]//\\\"/\"}//[^[:print:]]/}")
+  done
+  n=${_axle_nemc_state[$dir]##*:}
+  _axle_printp "%F{${_axle_c[error]:-red}}nemc:%f ${${dir/#$HOME/~}//\%/%%} has $n stored security finding${${n:#1}:+s}" >&2
+  for line in ${found[1,5]}; do print -u2 -r -- "  - $line"; done
+  (( ${#found} > 5 )) && print -u2 -r -- "  ... and $(( ${#found} - 5 )) more"
+  print -u2 -r -- "  (all of them: nemc secrets ${dir/#$HOME/~})"
+  _axle_nemc_can_ask || return 0                # no one to ask: say so, and go ahead
+  axle_confirm "Push anyway?" n && return 0
+  print -u2 -r -- "axle: push stopped (\`command git push\` skips this check)"
+  return 1
+}
+
+_axle_nemc_can_ask() { [[ -t 0 && -t 2 ]] }
+
+# Only what's typed at the prompt ($funcstack has just git), and only if you haven't got a
+# git function of your own.
+typeset -gi _axle_nemc_top=1                    # (tests: their own depth + 1)
+if (( ! $+functions[git] )) || [[ $functions[git] == *_axle_nemc_guard* ]]; then
+  git() {
+    if (( ${#funcstack} <= _axle_nemc_top )) && [[ ${1:-} == (push|-*) ]]; then
+      _axle_nemc_guard "$@" || return 1
+    fi
+    command git "$@"
+  }
+fi
+
+# --- j knows nemc's projects ----------------------------------------------------------
+#
+# `j <words>` also finds projects nemc has scanned that you've never worked in, ranked below
+# every folder you have. The list is a file (one folder a line), written in the background
+# after a nemc command that may change it, or by j when it's missing or a day old: never at a
+# prompt. Kept: projects you confirmed in nemc or it's sure of (confidence 0.75+), and none
+# inside a dependency, build or hidden folder (nemc lists node_modules packages too).
+
+typeset -g  _axle_nemc_projects_file=${XDG_CACHE_HOME:-$HOME/.cache}/axle/nemc-projects
+typeset -g  _axle_nemc_projects_mtime=''
+typeset -ga _axle_jump_more
+
+_axle_nemc_projects_refresh() {
+  local bin=${1:-} REPLY f=$_axle_nemc_projects_file
+  [[ -n $bin ]] || { _axle_nemc_bin || return 0; bin=$REPLY }
+  mkdir -p ${f:h} 2>/dev/null || return 0
+  ( command $bin projects --json 2>/dev/null | command awk '
+      /^ *\{ *$/ { p = ""; c = 0; u = 0 }
+      /^ *"path": "/ { p = $0; sub(/^ *"path": "/, "", p); sub(/",? *$/, "", p) }
+      /^ *"confidence": / { c = $2 + 0 }
+      /^ *"user_confirmed": true/ { u = 1 }
+      /^ *\},? *$/ {
+        if (p ~ /^\// && p !~ /[\\[:cntrl:]]/ && (u || c >= 0.75) &&
+            p !~ /\/(\.[^\/]*|node_modules|site-packages|vendor|dist|build|target|__pycache__)(\/|$)/)
+          print p
+      }' > $f.$$ && command mv -f $f.$$ $f || command rm -f $f.$$ ) &!
+}
+
+# Called by j before it ranks: the projects, read again only when the file changed.
+_axle_jump_load_more() {
+  (( AXLE_NEMC )) || { _axle_jump_more=(); return 0 }
+  local -a st
+  if ! zstat -A st +mtime -- $_axle_nemc_projects_file 2>/dev/null; then
+    _axle_jump_more=()
+    (( $+commands[nemc] )) && _axle_nemc_projects_refresh
+    return 0
+  fi
+  (( EPOCHSECONDS - st[1] > 86400 )) && (( $+commands[nemc] )) && _axle_nemc_projects_refresh
+  [[ $st[1] == $_axle_nemc_projects_mtime ]] && return 0
+  _axle_nemc_projects_mtime=$st[1]
+  _axle_jump_more=(${(f)"$(<$_axle_nemc_projects_file)"})
+}
 
 # --- reading the state in the background ------------------------------------------
 
@@ -224,5 +337,7 @@ _axle_nemc_doctor() {
   else _dr warn "MnemoCetus ${v:-of unknown version}: the compat needs 1.0 or newer" "update nemc"; fi
   (( $+aliases[nemc] )) &&
     _dr warn "an alias nemc='${aliases[nemc]}' skips axle's nemc" "remove it (unalias nemc), or AXLE_NEMC=0 to turn the compat off"
+  (( ${AXLE_NEMC_GUARD:-1} )) && [[ $functions[git] != *_axle_nemc_guard* ]] &&
+    _dr warn "you have a git function of your own, so git push isn't checked for nemc's findings" "AXLE_NEMC_GUARD=0 to say you don't want it"
   return 0
 }

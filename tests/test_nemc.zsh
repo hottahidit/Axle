@@ -1,14 +1,17 @@
 # The compat with MnemoCetus: axle nemc, the segment, the stand-down, the installer.
 
 # A fake nemc on PATH that logs its arguments and answers `status --json` with $T/answer.
+# (`projects`, which runs in the background, logs to projects.log.)
 _fake_nemc() {
   mkdir -p $T/bin
   cat > $T/bin/nemc <<EOF
 #!/bin/sh
-echo "\$*" >> $T/nemc.log
+case "\$1" in projects) echo "\$*" >> $T/projects.log ;; *) echo "\$*" >> $T/nemc.log ;; esac
 case "\$1" in
   --version) echo "MnemoCetus ${1:-1.0.0}" ;;
   status) cat $T/answer 2>/dev/null ;;
+  secrets) cat $T/secrets 2>/dev/null ;;
+  projects) cat $T/projects 2>/dev/null ;;
   fail) exit 3 ;;
 esac
 EOF
@@ -125,9 +128,9 @@ test_a_projects_own_nemc_is_never_run() {
   _axle_nemc_take "$(_axle_nemc_worker $PWD)"
   assert_eq "$_axle_nemc_state[$PWD]" "changed:0" "the prompt reads the installed one"
   axle nemc >/dev/null 2>&1
-  local said=$(nemc projects 2>&1)
+  local said=$(nemc changes 2>&1)
   assert_contains "$said" "not this project's" "typed nemc: says which one it runs"
-  assert_eq "${$(<$T/nemc.log)##*$'\n'}" "projects" "typed nemc: the installed one"
+  assert_eq "${$(<$T/nemc.log)##*$'\n'}" "changes" "typed nemc: the installed one"
   assert_contains "$(axle doctor)" "(compat $AXLE_NEMC_COMPAT)" "doctor asks the installed one"
   [[ ! -e $T/planted-ran ]] || fail "the project's nemc was run"
   # Only the planted one: nothing runs, and axle nemc says why.
@@ -252,6 +255,186 @@ test_doctor_reports_it() {
   assert_contains "$(axle doctor)" "(compat $AXLE_NEMC_COMPAT)" "found"
   alias nemc='nemc --db /tmp/x'
   assert_contains "$(axle doctor)" "skips axle's nemc" "an alias that skips it"
+}
+
+# --- before a push -------------------------------------------------------------------
+
+# A project at $T/p with a remote to push to; git runs as if typed at the prompt.
+_pushable() {
+  command git init -q --bare -b main $T/origin.git
+  mkrepo $T/p
+  command git -C $T/p remote add origin $T/origin.git
+  cd $T/p
+  _axle_nemc_top=${#funcstack}                 # (this function stands in for git)
+  cat > $T/secrets <<'EOF'
+[
+  {
+    "rule": "aws key",
+    "path": "config.py",
+    "detail": "AWS key in config.py:3 $(touch $T/ran) %F{red}",
+    "project_path": "x"
+  }
+]
+EOF
+}
+_pushed() { command git -C $T/origin.git rev-parse -q --verify main >/dev/null }
+
+test_push_dir_is_found() {
+  load_tool
+  mkdir -p $T/sub; cd $T
+  local REPLY
+  _axle_nemc_push_dir push origin || fail "a push"
+  assert_eq "$REPLY" "$PWD" "here, as the prompt names it"
+  _axle_nemc_push_dir -C sub --no-pager push || fail "options before push"
+  assert_eq "$REPLY" "$PWD/sub" "-C"
+  _axle_nemc_push_dir -c push.default=current push || fail "-c takes a value"
+  _axle_nemc_push_dir status && fail "not a push"
+  _axle_nemc_push_dir -C push status && fail "-C's folder isn't the command"
+  return 0
+}
+
+test_push_with_findings_asks() {
+  _fake_nemc; load_tool; _pushable
+  _answer security 2
+  _axle_nemc_can_ask() { return 0 }
+  axle_confirm() { print -r -- "$1" >> $T/asked; return 1 }
+  local out; out=$(git push -q origin main 2>&1)
+  assert_eq "$?" 1 "stopped"
+  _pushed && fail "nothing was pushed"
+  assert_eq "$(<$T/asked)" "Push anyway?" "asked"
+  assert_contains "$out" "has 2 stored security findings" "how many"
+  assert_contains "$out" 'AWS key in config.py:3 $(touch $T/ran) %F{red}' "what, as plain text"
+  assert_contains "$out" "push stopped" "says so"
+  [[ -e $T/ran ]] && fail "nemc's output was run"
+  axle_confirm() { return 0 }
+  git push -q origin main 2>/dev/null || fail "pushes when you say so"
+  _pushed || fail "pushed"
+}
+
+test_push_without_findings_just_pushes() {
+  _fake_nemc; load_tool; _pushable
+  _answer changed
+  axle_confirm() { print -r -- "$1" >> $T/asked; return 1 }
+  git push -q origin main 2>/dev/null || fail "pushed"
+  _pushed || fail "it reached the remote"
+  [[ -e $T/asked ]] && fail "nothing to ask"
+  assert_eq "$(<$T/nemc.log)" "status --json --budget 1 $T/p" "only the state was asked"
+}
+
+test_push_without_a_terminal_warns_and_goes() {
+  _fake_nemc; load_tool; _pushable
+  _answer security 1
+  _axle_nemc_can_ask() { return 1 }
+  local out; out=$(git push -q origin main 2>&1) || fail "pushed"
+  _pushed || fail "it reached the remote"
+  assert_contains "$out" "has 1 stored security finding" "but said so"
+}
+
+test_push_reads_the_prompts_memory() {
+  _fake_nemc; load_tool; _pushable
+  _answer clean
+  _axle_nemc_state[$PWD]=security:1 _axle_nemc_age[$PWD]=$EPOCHSECONDS
+  _axle_nemc_can_ask() { return 0 }
+  axle_confirm() { return 1 }
+  git push -q origin main 2>/dev/null && fail "the fresh state counts"
+  assert_eq "$(<$T/nemc.log)" "secrets --json $T/p" "the state wasn't asked again"
+  : > $T/nemc.log
+  _axle_nemc_age[$PWD]=$(( EPOCHSECONDS - AXLE_NEMC_TTL ))
+  git push -q origin main 2>/dev/null || fail "an old state is asked again: now clean"
+  assert_eq "$(<$T/nemc.log)" "status --json --budget 1 $T/p" "asked"
+}
+
+test_push_left_alone() {
+  _fake_nemc; load_tool; _pushable
+  _answer security 1
+  _axle_nemc_can_ask() { return 0 }
+  axle_confirm() { return 1 }
+  pusher() { git push -q origin main }
+  pusher 2>/dev/null || fail "a function's push isn't stopped"
+  command git -C $T/origin.git update-ref -d refs/heads/main
+  AXLE_NEMC_GUARD=0 git push -q origin main 2>/dev/null || fail "AXLE_NEMC_GUARD=0"
+  command git -C $T/origin.git update-ref -d refs/heads/main
+  AXLE_NEMC=0 git push -q origin main 2>/dev/null || fail "AXLE_NEMC=0"
+  assert_eq "$(<$T/nemc.log 2>/dev/null)" "" "nemc never asked"
+  git status >/dev/null || fail "other commands pass"
+  assert_eq "$(<$T/nemc.log 2>/dev/null)" "" "and don't ask nemc"
+}
+
+test_push_never_runs_a_projects_nemc() {
+  load_tool; _pushable
+  mkdir -p $T/p/.venv/bin
+  print -r -- $'#!/bin/sh\necho planted >> '"$T"$'/planted\necho \'{"state": "security", "findings": 1}\'' > $T/p/.venv/bin/nemc
+  chmod +x $T/p/.venv/bin/nemc
+  path=($T/p/.venv/bin /usr/bin /bin); rehash
+  _axle_env_auto=$T/p/.venv
+  git push -q origin main 2>/dev/null || fail "pushed"
+  [[ -e $T/planted ]] && fail "the project's nemc ran"
+  return 0
+}
+
+test_your_own_git_function_is_kept() {
+  git() { print mine }
+  load_tool
+  assert_eq "$(git push)" "mine" "yours"
+}
+
+# --- j knows nemc's projects ---------------------------------------------------------
+
+# nemc's project list (as `nemc projects --json` prints it): one of each kind it keeps or drops.
+_projects() {
+  local p json='['
+  for p in "$@"; do
+    local -a f=(${(s:|:)p})                     # path|confidence|confirmed
+    json+=$'\n  {\n    "path": "'$f[1]$'",\n    "language": "python",\n    "confidence": '$f[2]$',\n    "dependencies": [\n      "flask"\n    ],\n    "user_confirmed": '$f[3]$'\n  },'
+  done
+  print -r -- "${json%,}"$'\n]' > $T/projects
+}
+_projects_file() { print -r -- ${XDG_CACHE_HOME:-$HOME/.cache}/axle/nemc-projects }
+_wait_for_file() {
+  local -i i
+  for i in {1..50}; do [[ -e $1 ]] && return 0; sleep 0.1; done
+  fail "nothing written to $1"
+}
+
+test_projects_list_keeps_real_projects() {
+  _fake_nemc; load_tool
+  _projects "$T/shop|0.98|false" "$T/guess|0.7|false" "$T/mine|0.5|true" \
+    "$T/shop/node_modules/flask|0.98|false" "$T/.cache/x|0.98|false" "$T/shop/build|0.98|false" \
+    'relative|0.98|false'
+  _axle_nemc_projects_refresh
+  _wait_for_file $(_projects_file)
+  assert_eq "$(<$(_projects_file))" "$T/shop"$'\n'"$T/mine" "sure, or confirmed by you; no dependencies, builds or hidden folders"
+}
+
+test_j_finds_a_project_you_never_worked_in() {
+  _fake_nemc; load_tool
+  mkdir -p $T/repos/shop-api $T/old/shop-api $T/elsewhere
+  _projects "$T/old/shop-api|0.98|false"
+  local -a reply
+  _axle_jump_rank shop
+  _wait_for_file $(_projects_file)
+  cd $T/elsewhere
+  _axle_jump_rank shop
+  assert_eq "$reply" "$T/old/shop-api" "from nemc's list"
+  _axt_preexec ls; cd $T/repos/shop-api; _axle_ev_dir=$PWD; _axt_precmd; cd $T/elsewhere
+  _axle_jump_rank shop
+  assert_eq "${(j:,:)reply}" "$T/repos/shop-api,$T/old/shop-api" "below a folder you worked in"
+  _axle_jump_rank
+  assert_eq "${(j:,:)reply}" "$T/repos/shop-api" "your top folders are only yours"
+  AXLE_NEMC=0
+  _axle_jump_rank shop
+  assert_eq "${(j:,:)reply}" "$T/repos/shop-api" "AXLE_NEMC=0: none of nemc's"
+}
+
+test_projects_list_follows_nemc_commands() {
+  _fake_nemc; load_tool
+  _projects "$T/a|0.98|false"
+  nemc init zsh >/dev/null; nemc status >/dev/null
+  sleep 0.3
+  [[ -e $(_projects_file) ]] && fail "not after init or status"
+  nemc scan $T >/dev/null
+  _wait_for_file $(_projects_file)
+  assert_eq "$(<$(_projects_file))" "$T/a" "after a scan"
 }
 
 # --- install.sh --------------------------------------------------------------------

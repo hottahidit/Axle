@@ -29,6 +29,8 @@ Commits are `(MnemoCetus)vX.Y.Z - Title`, numbered by the branch's own progress 
 
 ## Done
 
+- **v0.3.0:** `git push` asks first where nemc has stored security findings; `j` finds the
+  projects nemc has scanned.
 - **v0.2.0:** `nemc` itself runs through Axle (prompt refresh, hook events `nemc-start` /
   `nemc-done`); never runs a `nemc` that came with a project (its `.venv`, or `.` on PATH).
 - **v0.1.3:** the wizard test no longer races on slow machines (macOS CI).
@@ -40,6 +42,10 @@ Commits are `(MnemoCetus)vX.Y.Z - Title`, numbered by the branch's own progress 
 ## Ideas
 
 - A drop while a scan runs, and on new findings after `nemc rescan`.
-- `j` and `axle run` (once Legionary lands on `main`) using nemc's project list and categories.
+- `axle run` (once Legionary lands on `main`) using nemc's project list and categories.
+- Alt-i shows nemc's `reason`; a stale-scan note from `scanned_at`.
+- `fix` suggests `nemc reclaim` on "No space left on device".
+- After `pip`/`npm install`: `nemc audit` in the background (opt-in: it uses the network).
+- After `git clone`: suggest `nemc scan` of the new folder.
 - `axle stats` beside nemc's project data: where you work against what's bloated or stale.
 - A `nemc status --porcelain` in MnemoCetus, for a contract that isn't JSON by regex.
